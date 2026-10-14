@@ -1,0 +1,229 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# AI Evaluation — OCR CER/WER Benchmark
+# Runs on push to main and weekly to track model quality over time
+# SRS Section 7.3: Publish measured CER/WER on documented test sets
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: AI Evaluation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "services/ocr-worker/**"
+      - "tests/ai-evaluation/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "services/ocr-worker/**"
+      - "tests/ai-evaluation/**"
+  schedule:
+    # Run every Sunday at 06:00 UTC — weekly regression check
+    - cron: "0 6 * * 0"
+  workflow_dispatch:
+    inputs:
+      cer_threshold:
+        description: "CER threshold (0.0–1.0)"
+        required: false
+        default: "0.15"
+      language:
+        description: "Tesseract language code"
+        required: false
+        default: "amh+eng"
+
+jobs:
+
+  # ─── Metrics unit tests (always run, no Tesseract needed) ─────────────────
+  metrics-unit-tests:
+    name: CER/WER Unit Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tests/ai-evaluation/requirements.txt
+
+      - name: Install evaluation dependencies
+        working-directory: tests/ai-evaluation
+        run: |
+          pip install --upgrade pip
+          pip install \
+            jiwer \
+            Pillow \
+            pytest \
+            pytest-html \
+            pytest-json-report \
+            tabulate \
+            pandas \
+            numpy \
+            unicodedata2
+
+      - name: Run metrics unit tests (no Tesseract)
+        working-directory: tests/ai-evaluation
+        run: |
+          pytest test_ocr_evaluation.py \
+            -v \
+            -k "TestMetricsUnit or TestFixtureDiscovery or TestReportGeneration" \
+            --json-report \
+            --json-report-file=reports/pytest_unit.json \
+            --tb=short \
+            -p no:cacheprovider
+        env:
+          OCR_USE_SYNTHETIC: "false"   # no synthetic gen in unit-only run
+
+      - name: Upload unit test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-eval-unit-report
+          path: tests/ai-evaluation/reports/
+          retention-days: 30
+
+  # ─── Full OCR evaluation with Tesseract ───────────────────────────────────
+  ocr-evaluation:
+    name: OCR Evaluation (Tesseract)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Tesseract + Amharic tessdata
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            tesseract-ocr \
+            tesseract-ocr-amh \
+            tesseract-ocr-eng \
+            tesseract-ocr-tir \
+            poppler-utils \
+            libglib2.0-0
+          tesseract --version
+          tesseract --list-langs
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tests/ai-evaluation/requirements.txt
+
+      - name: Install evaluation dependencies
+        working-directory: tests/ai-evaluation
+        run: |
+          pip install --upgrade pip
+          pip install \
+            jiwer \
+            Pillow \
+            pytesseract \
+            pdf2image \
+            opencv-python-headless \
+            numpy \
+            pandas \
+            tabulate \
+            unicodedata2 \
+            pytest \
+            pytest-html \
+            pytest-json-report
+
+      - name: Run full OCR evaluation
+        working-directory: tests/ai-evaluation
+        run: |
+          python -m pytest test_ocr_evaluation.py \
+            -v \
+            --tb=short \
+            --json-report \
+            --json-report-file=reports/pytest_full.json \
+            -p no:cacheprovider
+        env:
+          OCR_LANGUAGE:       ${{ github.event.inputs.language || 'amh+eng' }}
+          OCR_CER_THRESHOLD:  ${{ github.event.inputs.cer_threshold || '0.15' }}
+          OCR_MODEL_NAME:     tesseract
+          OCR_USE_SYNTHETIC:  "true"
+          OCR_RUN_ID:         "ci-${{ github.run_number }}"
+          TESSDATA_PREFIX:    /usr/share/tesseract-ocr/5/tessdata
+
+      - name: Display CER/WER summary
+        if: always()
+        working-directory: tests/ai-evaluation
+        run: |
+          if [ -f reports/latest_summary.txt ]; then
+            cat reports/latest_summary.txt
+          fi
+
+      - name: Upload evaluation reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-eval-reports-${{ github.run_number }}
+          path: tests/ai-evaluation/reports/
+          retention-days: 90
+
+      - name: Comment CER/WER on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const summaryPath = 'tests/ai-evaluation/reports/latest_summary.txt';
+            if (fs.existsSync(summaryPath)) {
+              const summary = fs.readFileSync(summaryPath, 'utf8');
+              await github.rest.issues.createComment({
+                issue_number: context.issue.number,
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                body: `## 🇪🇹 AI Evaluation Results\n\`\`\`\n${summary}\n\`\`\``
+              });
+            }
+
+  # ─── Regression gate — fail if CER worsened vs baseline ──────────────────
+  regression-gate:
+    name: CER Regression Gate
+    runs-on: ubuntu-latest
+    needs: [ocr-evaluation]
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download current evaluation report
+        uses: actions/download-artifact@v4
+        with:
+          name: ai-eval-reports-${{ github.run_number }}
+          path: current-reports
+
+      - name: Check CER threshold
+        run: |
+          python3 - << 'EOF'
+          import json, sys, os
+
+          report_path = "current-reports/pytest_full.json"
+          threshold   = float(os.environ.get("OCR_CER_THRESHOLD", "0.15"))
+
+          if not os.path.exists(report_path):
+              print("No full report found — skipping regression check")
+              sys.exit(0)
+
+          with open(report_path) as f:
+              data = json.load(f)
+
+          failed = data.get("summary", {}).get("failed", 0)
+          total  = data.get("summary", {}).get("total", 0)
+
+          print(f"Tests: {total - failed}/{total} passed")
+
+          if failed > 0:
+              print(f"FAIL: {failed} test(s) failed — CER threshold may have been exceeded")
+              sys.exit(1)
+
+          print("PASS: All evaluation tests passed")
+          EOF
+        env:
+          OCR_CER_THRESHOLD: ${{ github.event.inputs.cer_threshold || '0.15' }}

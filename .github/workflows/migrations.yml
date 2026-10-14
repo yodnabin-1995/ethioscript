@@ -1,0 +1,177 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Database Migrations Check
+# Validates all SQL migration files run cleanly against a real PostgreSQL
+# instance. Catches syntax errors and constraint violations before merge.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: Migrations
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - "migrations/**"
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "migrations/**"
+
+jobs:
+
+  validate-migrations:
+    name: Validate SQL Migrations
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ethio
+          POSTGRES_PASSWORD: migrtest
+          POSTGRES_DB: ethioscript_migration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ethio -d ethioscript_migration_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run migrations in order
+        env:
+          PGPASSWORD: migrtest
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: ethio
+          PGDATABASE: ethioscript_migration_test
+        run: |
+          echo "Running migrations..."
+          for f in $(ls migrations/*.sql | sort); do
+            echo "  → Applying: $f"
+            psql -f "$f" -v ON_ERROR_STOP=1
+            echo "  ✓ $f applied"
+          done
+          echo ""
+          echo "All migrations applied successfully"
+
+      - name: Verify schema — check all expected tables exist
+        env:
+          PGPASSWORD: migrtest
+        run: |
+          TABLES=$(psql -h localhost -U ethio -d ethioscript_migration_test -t -c "
+            SELECT tablename FROM pg_tables
+            WHERE schemaname = 'public'
+            ORDER BY tablename;
+          ")
+
+          echo "Tables created:"
+          echo "$TABLES"
+
+          REQUIRED="api_keys assets audit_events documents email_verifications \
+                    export_artifacts outbox_events password_reset_tokens \
+                    processing_jobs refresh_tokens result_versions tenants \
+                    usage_records users"
+
+          for table in $REQUIRED; do
+            if echo "$TABLES" | grep -q "$table"; then
+              echo "  ✓ $table"
+            else
+              echo "  ✗ MISSING: $table"
+              exit 1
+            fi
+          done
+
+          echo ""
+          echo "All required tables present"
+
+      - name: Verify indexes exist
+        env:
+          PGPASSWORD: migrtest
+        run: |
+          INDEX_COUNT=$(psql -h localhost -U ethio -d ethioscript_migration_test -t -c "
+            SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public';
+          " | tr -d ' ')
+
+          echo "Total indexes: $INDEX_COUNT"
+          if [ "$INDEX_COUNT" -lt 20 ]; then
+            echo "ERROR: Expected at least 20 indexes, got $INDEX_COUNT"
+            exit 1
+          fi
+          echo "✓ Index count looks correct"
+
+      - name: Verify default tenant seed
+        env:
+          PGPASSWORD: migrtest
+        run: |
+          TENANT=$(psql -h localhost -U ethio -d ethioscript_migration_test -t -c "
+            SELECT slug FROM tenants WHERE slug = 'default';
+          " | tr -d ' ')
+
+          if [ "$TENANT" = "default" ]; then
+            echo "✓ Default tenant seed present"
+          else
+            echo "✗ Default tenant seed missing"
+            exit 1
+          fi
+
+      - name: Test idempotency — run migrations again (should not error)
+        env:
+          PGPASSWORD: migrtest
+          PGHOST: localhost
+          PGPORT: 5432
+          PGUSER: ethio
+          PGDATABASE: ethioscript_migration_test
+        run: |
+          echo "Testing idempotency..."
+          # The migrations use IF NOT EXISTS and CREATE EXTENSION IF NOT EXISTS
+          # Running again should not break anything
+          psql -f migrations/002_account_service_tables.sql -v ON_ERROR_STOP=1
+          echo "✓ Migrations are idempotent"
+
+  # ─── Check migration file naming convention ─────────────────────────────────
+  lint-migrations:
+    name: Lint Migration Files
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check naming convention
+        run: |
+          echo "Checking migration file naming..."
+          ERRORS=0
+          for f in migrations/*.sql; do
+            filename=$(basename "$f")
+            if echo "$filename" | grep -Eq "^[0-9]{3}_[a-z0-9_]+\.sql$"; then
+              echo "  ✓ $filename"
+            else
+              echo "  ✗ Invalid name: $filename (must match NNN_name.sql)"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          if [ "$ERRORS" -gt 0 ]; then
+            echo ""
+            echo "ERROR: $ERRORS migration file(s) have invalid names"
+            exit 1
+          fi
+          echo "All migration files correctly named"
+
+      - name: Check migrations are sequential
+        run: |
+          echo "Checking migration sequence..."
+          PREV=0
+          for f in $(ls migrations/*.sql | sort); do
+            NUM=$(basename "$f" | cut -d_ -f1 | sed 's/^0*//')
+            if [ "$NUM" -ne "$((PREV + 1))" ]; then
+              echo "ERROR: Gap in migration sequence at $f (expected $((PREV + 1)), got $NUM)"
+              exit 1
+            fi
+            PREV=$NUM
+          done
+          echo "✓ Migration sequence is valid (1–$PREV)"

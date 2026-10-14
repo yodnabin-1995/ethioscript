@@ -1,0 +1,216 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# Docker Build & Push — GHCR
+# Builds all service images and pushes to GitHub Container Registry
+# Runs on push to main/develop, and on release tags
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: Docker Build & Push
+
+on:
+  push:
+    branches: [main, develop]
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/ethioscript
+
+jobs:
+
+  # ─── Build matrix ─────────────────────────────────────────────────────────────
+  build-push:
+    name: "Build ${{ matrix.service }}"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: account-service
+            context: ./services/account-service
+            port: 6000
+          - service: document-service
+            context: ./services/document-service
+            port: 6001
+          - service: job-orchestrator
+            context: ./services/job-orchestrator
+            port: 6002
+          - service: ocr-worker
+            context: ./services/ocr-worker
+            port: 6003
+          - service: stt-worker
+            context: ./services/stt-worker
+            port: 6004
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU (multi-arch)
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.context }}/Dockerfile
+          target: production
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+          build-args: |
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            GIT_COMMIT=${{ github.sha }}
+            VERSION=${{ github.ref_name }}
+
+      - name: Image digest
+        if: github.event_name != 'pull_request'
+        run: echo "Pushed ${{ matrix.service }} — ${{ steps.meta.outputs.tags }}"
+
+  # ─── Build MinIO custom image ──────────────────────────────────────────────────
+  build-minio:
+    name: Build MinIO (custom)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/minio
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+
+      - name: Build and push MinIO
+        uses: docker/build-push-action@v5
+        with:
+          context: ./deployments/minio
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha,scope=minio
+          cache-to: type=gha,mode=max,scope=minio
+
+  # ─── Docker Compose smoke test ────────────────────────────────────────────────
+  compose-smoke-test:
+    name: Compose Smoke Test
+    runs-on: ubuntu-latest
+    needs: [build-push]
+    if: github.event_name == 'pull_request'
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create CI .env
+        run: |
+          cat > .env << 'EOF'
+          POSTGRES_USER=ethio
+          POSTGRES_PASSWORD=CIPass2024!
+          POSTGRES_DB=ethioscript
+          REDIS_PASSWORD=CIRedis2024!
+          RABBITMQ_USER=ethio
+          RABBITMQ_PASSWORD=CIRabbit2024!
+          RABBITMQ_VHOST=ethioscript
+          MINIO_ROOT_USER=minioadmin
+          MINIO_ROOT_PASSWORD=CIMinio2024!
+          MINIO_BUCKET=ethioscript-assets
+          JWT_SECRET=CIJWTSecretKeyForTestingOnly32Chars!
+          JWT_EXPIRY_HOURS=1
+          REFRESH_TOKEN_EXPIRY_DAYS=1
+          EMAIL_VERIFY_EXPIRY_HOURS=1
+          PASSWORD_RESET_EXPIRY_MINUTES=5
+          INTERNAL_API_KEY=CIInternalKey2024!
+          ALLOWED_ORIGINS=http://localhost:3000
+          RATE_LIMIT_RPS=10000
+          RATE_LIMIT_BURST=1000
+          SWAGGER_ENABLED=false
+          PGADMIN_EMAIL=admin@ethioscript.io
+          PGADMIN_PASSWORD=CIPgAdmin2024!
+          GRAFANA_USER=admin
+          GRAFANA_PASSWORD=CIGrafana2024!
+          EOF
+
+      - name: Build and start infra + services
+        run: |
+          docker compose up -d --build \
+            postgres redis rabbitmq \
+            account-service document-service job-orchestrator
+          
+          # Wait up to 2 min for services
+          timeout 120 bash -c 'until curl -sf http://localhost:6000/health; do sleep 5; done'
+          timeout 60  bash -c 'until curl -sf http://localhost:6001/health; do sleep 5; done'
+          timeout 60  bash -c 'until curl -sf http://localhost:6002/health; do sleep 5; done'
+
+      - name: Smoke test — register and login
+        run: |
+          REGISTER=$(curl -sf -X POST http://localhost:6000/auth/register \
+            -H "Content-Type: application/json" \
+            -d '{"tenant_slug":"default","name":"CI User","email":"ci@test.io","password":"CITest1234"}')
+          echo "Register response: $REGISTER"
+          
+          TOKEN=$(echo $REGISTER | python3 -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+          echo "Got access token: ${TOKEN:0:20}..."
+          
+          ME=$(curl -sf http://localhost:6000/auth/me \
+            -H "Authorization: Bearer $TOKEN")
+          echo "Me response: $ME"
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
