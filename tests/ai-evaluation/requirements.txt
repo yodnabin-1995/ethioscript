@@ -1,0 +1,17 @@
+# AI Evaluation harness dependencies
+jiwer==3.0.4              # CER/WER computation (industry standard)
+Pillow==10.3.0            # image generation for synthetic test fixtures
+pytesseract==0.3.10       # direct OCR calls for local evaluation
+pdf2image==1.17.0         # PDF → image for evaluation fixtures
+minio==7.2.7              # download test artifacts from object storage
+requests==2.31.0          # call live OCR worker API
+pytest==8.2.0             # test runner
+pytest-html==4.1.1        # HTML report generation
+pytest-json-report==1.5.0 # JSON report for CI
+tabulate==0.9.0           # pretty-print result tables
+matplotlib==3.8.4         # charts in reports
+numpy==1.26.4             # numeric ops
+pandas==2.2.2             # results dataframe
+tqdm==4.66.2              # progress bars
+python-dotenv==1.0.1      # load .env for evaluation config
+unicodedata2==15.1.0      # robust Ethiopic Unicode normalization

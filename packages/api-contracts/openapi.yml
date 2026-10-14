@@ -1,0 +1,781 @@
+openapi: "3.1.0"
+
+info:
+  title: EthioScript & Voice AI — API
+  version: "3.1.0"
+  description: |
+    Ethiopic-script document intelligence and regional-language speech transcription platform.
+
+    **Base URL:** `http://localhost:6000/api/v1`
+
+    **Authentication:** All protected endpoints require a Bearer JWT obtained from `/auth/login`.
+    Include it as: `Authorization: Bearer <token>`
+  contact:
+    name: EthioScript Team
+    email: api@ethioscript.io
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:6000/api/v1
+    description: Local development
+  - url: https://api.ethioscript.io/api/v1
+    description: Production
+
+tags:
+  - name: auth
+    description: Authentication and token management
+  - name: assets
+    description: File upload pre-signing and asset registration
+  - name: documents
+    description: Document lifecycle, review, and export
+  - name: jobs
+    description: Asynchronous processing job status
+  - name: system
+    description: Health, readiness, and metrics
+
+# ─── Security ─────────────────────────────────────────────────────────────────
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT access token obtained from /auth/login
+
+  # ── Reusable schemas ────────────────────────────────────────────────────────
+  schemas:
+
+    ErrorResponse:
+      type: object
+      required: [error, code]
+      properties:
+        error:
+          type: string
+          example: "document not found"
+        code:
+          type: string
+          example: "NOT_FOUND"
+        trace_id:
+          type: string
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+
+    Tenant:
+      type: object
+      properties:
+        id:         { type: string, format: uuid }
+        name:       { type: string }
+        slug:       { type: string }
+        is_active:  { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    User:
+      type: object
+      properties:
+        id:             { type: string, format: uuid }
+        tenant_id:      { type: string, format: uuid }
+        email:          { type: string, format: email }
+        name:           { type: string }
+        role:
+          type: string
+          enum: [TENANT_ADMIN, CONTRIBUTOR, REVIEWER, READ_ONLY_AUDITOR, PLATFORM_OPERATOR]
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED, PENDING_VERIFICATION, DELETED]
+        email_verified: { type: boolean }
+        last_login_at:  { type: string, format: date-time, nullable: true }
+        created_at:     { type: string, format: date-time }
+        updated_at:     { type: string, format: date-time }
+
+    TokenResponse:
+      type: object
+      required: [access_token, refresh_token, expires_at, token_type, user]
+      properties:
+        access_token:
+          type: string
+          description: Short-lived JWT access token
+        refresh_token:
+          type: string
+          description: Opaque refresh token for rotating access tokens
+        expires_at:
+          type: string
+          format: date-time
+        token_type:
+          type: string
+          example: Bearer
+        user:
+          $ref: '#/components/schemas/User'
+
+    RegisterRequest:
+      type: object
+      required: [tenant_slug, name, email, password]
+      properties:
+        tenant_slug:
+          type: string
+          example: "default"
+        name:
+          type: string
+          example: "Abebe Kebede"
+        email:
+          type: string
+          format: email
+          example: "abebe@example.com"
+        password:
+          type: string
+          minLength: 8
+          format: password
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    RefreshRequest:
+      type: object
+      required: [refresh_token]
+      properties:
+        refresh_token:
+          type: string
+
+    UploadInitRequest:
+      type: object
+      required: [filename, media_type, size_bytes]
+      properties:
+        filename:
+          type: string
+          example: "amharic_document.pdf"
+        media_type:
+          type: string
+          enum: [application/pdf, image/jpeg, image/png, image/tiff, image/webp, audio/mpeg, audio/wav, audio/mp4, audio/ogg]
+        size_bytes:
+          type: integer
+          format: int64
+          example: 1048576
+        checksum_sha256:
+          type: string
+          example: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+
+    UploadInitResponse:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        upload_url:
+          type: string
+          format: uri
+          description: Pre-signed PUT URL for direct upload to object storage
+        upload_method:
+          type: string
+          example: PUT
+        expires_at:
+          type: string
+          format: date-time
+
+    CreateDocumentRequest:
+      type: object
+      required: [asset_id, filename]
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+        filename:
+          type: string
+        language:
+          type: string
+          example: "amh"
+          description: BCP-47 / ISO 639 language code
+        task_type:
+          type: string
+          enum: [OCR, STT, CLASSIFICATION, EXPORT]
+          default: OCR
+        title:
+          type: string
+          nullable: true
+        description:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items: { type: string }
+
+    Document:
+      type: object
+      properties:
+        id:               { type: string, format: uuid }
+        tenant_id:        { type: string, format: uuid }
+        asset_id:         { type: string, format: uuid }
+        filename:         { type: string }
+        language:         { type: string }
+        task_type:
+          type: string
+          enum: [OCR, STT, CLASSIFICATION, EXPORT]
+        status:
+          type: string
+          enum: [UPLOADED, QUEUED, PROCESSING, REVIEW_REQUIRED, APPROVED, FAILED, CANCELLED, ARCHIVED, DELETED]
+        title:            { type: string, nullable: true }
+        description:      { type: string, nullable: true }
+        tags:             { type: array, items: { type: string } }
+        page_count:       { type: integer, nullable: true }
+        duration_seconds: { type: number, nullable: true }
+        created_by:       { type: string, format: uuid }
+        approved_by:      { type: string, format: uuid, nullable: true }
+        approved_at:      { type: string, format: date-time, nullable: true }
+        created_at:       { type: string, format: date-time }
+        updated_at:       { type: string, format: date-time }
+
+    DocumentListResponse:
+      type: object
+      properties:
+        documents:
+          type: array
+          items: { $ref: '#/components/schemas/Document' }
+        total:       { type: integer }
+        page:        { type: integer }
+        page_size:   { type: integer }
+        total_pages: { type: integer }
+
+    SaveDraftRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          description: Corrected extracted text to save as draft
+
+    ApproveRequest:
+      type: object
+      properties:
+        version:
+          type: integer
+        comment:
+          type: string
+
+    ResultVersion:
+      type: object
+      properties:
+        id:               { type: string, format: uuid }
+        document_id:      { type: string, format: uuid }
+        version:          { type: integer }
+        is_approved:      { type: boolean }
+        approved_text:    { type: string, nullable: true }
+        confidence_score: { type: number, nullable: true }
+        model_metadata:   { type: object }
+        word_count:       { type: integer, nullable: true }
+        char_count:       { type: integer, nullable: true }
+        created_by:       { type: string, format: uuid }
+        approved_by:      { type: string, format: uuid, nullable: true }
+        approved_at:      { type: string, format: date-time, nullable: true }
+        created_at:       { type: string, format: date-time }
+
+    Job:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        document_id:   { type: string, format: uuid }
+        tenant_id:     { type: string, format: uuid }
+        task_type:
+          type: string
+          enum: [OCR, STT]
+        state:
+          type: string
+          enum: [PENDING, QUEUED, PROCESSING, REVIEW_REQUIRED, COMPLETED, FAILED, CANCELLED, RETRYING]
+        attempts:      { type: integer }
+        max_attempts:  { type: integer }
+        model_name:    { type: string, nullable: true }
+        model_version: { type: string, nullable: true }
+        language:      { type: string, nullable: true }
+        error_code:    { type: string, nullable: true }
+        error_message: { type: string, nullable: true }
+        priority:      { type: integer }
+        started_at:    { type: string, format: date-time, nullable: true }
+        finished_at:   { type: string, format: date-time, nullable: true }
+        created_at:    { type: string, format: date-time }
+        updated_at:    { type: string, format: date-time }
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+        version:   { type: string }
+        timestamp: { type: string, format: date-time }
+        services:
+          type: object
+          additionalProperties: { type: string }
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+
+paths:
+
+  # ── System ──────────────────────────────────────────────────────────────────
+
+  /health:
+    get:
+      tags: [system]
+      summary: Health check
+      description: Returns service and dependency health status
+      operationId: getHealth
+      responses:
+        "200":
+          description: Service healthy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+        "503":
+          description: Service degraded
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+
+  /ready:
+    get:
+      tags: [system]
+      summary: Readiness probe
+      operationId: getReadiness
+      responses:
+        "200": { description: Ready }
+        "503": { description: Not ready }
+
+  # ── Auth ────────────────────────────────────────────────────────────────────
+
+  /auth/register:
+    post:
+      tags: [auth]
+      summary: Register a new user
+      operationId: registerUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegisterRequest' }
+      responses:
+        "201":
+          description: User created and tokens issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        "409":
+          description: Email already registered
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /auth/login:
+    post:
+      tags: [auth]
+      summary: Authenticate user
+      operationId: loginUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        "200":
+          description: Authentication successful
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        "401":
+          description: Invalid credentials
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /auth/refresh:
+    post:
+      tags: [auth]
+      summary: Refresh access token
+      operationId: refreshToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        "200":
+          description: New token pair issued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        "401":
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /auth/logout:
+    post:
+      tags: [auth]
+      summary: Logout user
+      operationId: logoutUser
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RefreshRequest' }
+      responses:
+        "204": { description: Logged out }
+
+  /auth/me:
+    get:
+      tags: [auth]
+      summary: Get current user profile
+      operationId: getCurrentUser
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        "401":
+          description: Unauthenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── Assets ──────────────────────────────────────────────────────────────────
+
+  /assets:
+    post:
+      tags: [assets]
+      summary: Initiate file upload
+      description: |
+        Returns a pre-signed PUT URL for direct-to-MinIO upload.
+        After uploading, use the returned `asset_id` to create a document.
+      operationId: initiateUpload
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/UploadInitRequest' }
+      responses:
+        "200":
+          description: Pre-signed upload URL
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UploadInitResponse' }
+        "400":
+          description: Validation error (unsupported type, size exceeded)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        "401":
+          description: Unauthenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  # ── Documents ───────────────────────────────────────────────────────────────
+
+  /documents:
+    post:
+      tags: [documents]
+      summary: Create document and start processing job
+      description: |
+        Registers a document from an uploaded asset and atomically creates
+        a durable processing job + outbox event.
+        Returns immediately with PENDING/QUEUED status — use job polling to track progress.
+      operationId: createDocument
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDocumentRequest' }
+        description: Idempotency-Key header recommended for retry-safe requests
+      responses:
+        "201":
+          description: Document created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        "401":
+          description: Unauthenticated
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    get:
+      tags: [documents]
+      summary: List documents
+      operationId: listDocuments
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: page_size
+          in: query
+          schema: { type: integer, default: 20, maximum: 100 }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [UPLOADED, QUEUED, PROCESSING, REVIEW_REQUIRED, APPROVED, FAILED, CANCELLED, ARCHIVED]
+        - name: language
+          in: query
+          schema: { type: string, example: "amh" }
+      responses:
+        "200":
+          description: Paginated document list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentListResponse' }
+
+  /documents/{id}:
+    get:
+      tags: [documents]
+      summary: Get document
+      operationId: getDocument
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Document detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    delete:
+      tags: [documents]
+      summary: Delete document
+      operationId: deleteDocument
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /documents/{id}/result:
+    get:
+      tags: [documents]
+      summary: Get extraction result
+      operationId: getDocumentResult
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Latest result version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultVersion' }
+        "404":
+          description: No result yet
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /documents/{id}/result/draft:
+    put:
+      tags: [documents]
+      summary: Save reviewer draft
+      description: Saves a text correction. Uses optimistic locking via version number.
+      operationId: saveDraft
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveDraftRequest' }
+      responses:
+        "204": { description: Draft saved }
+        "409":
+          description: Document not in editable state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /documents/{id}/approve:
+    post:
+      tags: [documents]
+      summary: Approve document result
+      description: Marks the latest result version as approved and records the reviewer identity and timestamp.
+      operationId: approveDocument
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApproveRequest' }
+      responses:
+        "204": { description: Approved }
+        "409":
+          description: Invalid state for approval
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /documents/{id}/retry:
+    post:
+      tags: [documents]
+      summary: Retry failed document processing
+      operationId: retryDocument
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "202": { description: Retry scheduled }
+        "409":
+          description: Document not in a retryable state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /documents/{id}/exports:
+    post:
+      tags: [documents]
+      summary: Request export artifact
+      operationId: requestExport
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format]
+              properties:
+                format:
+                  type: string
+                  enum: [TXT, DOCX, PDF_SEARCHABLE, JSON]
+      responses:
+        "202":
+          description: Export job queued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  export_id: { type: string, format: uuid }
+                  status:    { type: string }
+
+  # ── Jobs ────────────────────────────────────────────────────────────────────
+
+  /jobs/{id}:
+    get:
+      tags: [jobs]
+      summary: Get job status
+      description: |
+        Returns the durable processing job state.
+        Poll this endpoint after creating a document to track processing progress.
+      operationId: getJob
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Job status
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+              example:
+                job_id: "550e8400-e29b-41d4-a716-446655440000"
+                document_id: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+                status: "PENDING"
+                task_type: "OCR"
+                language: "amh"
+                created_at: "2026-10-14T10:00:00Z"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /jobs/{id}/cancel:
+    post:
+      tags: [jobs]
+      summary: Cancel a job
+      operationId: cancelJob
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Cancelled }
+        "409":
+          description: Job cannot be cancelled in current state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }

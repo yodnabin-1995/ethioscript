@@ -1,0 +1,151 @@
+openapi: "3.1.0"
+
+info:
+  title: EthioScript — Job Orchestrator API
+  version: "3.1.0"
+  description: |
+    **Internal microservice** — manages durable processing job state, outbox publishing,
+    lease/heartbeat, retry policy, and dead-letter routing.
+
+    Direct calls require the `X-Internal-Key` header.
+    Use the **API Gateway** (`http://localhost:6000/api/v1`) for external access.
+
+servers:
+  - url: http://localhost:6002
+    description: Direct (internal / dev)
+  - url: http://localhost:6000
+    description: Via Account Service (JWT verified)
+
+tags:
+  - name: jobs
+    description: Processing job lifecycle
+  - name: system
+    description: Health and metrics
+
+components:
+  securitySchemes:
+    InternalKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Key
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+        code:  { type: string }
+
+    JobState:
+      type: string
+      enum: [PENDING, QUEUED, PROCESSING, REVIEW_REQUIRED, COMPLETED, FAILED, CANCELLED, RETRYING]
+
+    TaskType:
+      type: string
+      enum: [OCR, STT]
+
+    Job:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        document_id:   { type: string, format: uuid }
+        tenant_id:     { type: string, format: uuid }
+        task_type:     { $ref: '#/components/schemas/TaskType' }
+        state:         { $ref: '#/components/schemas/JobState' }
+        attempts:      { type: integer }
+        max_attempts:  { type: integer }
+        worker_id:     { type: string, nullable: true }
+        model_name:    { type: string, nullable: true }
+        model_version: { type: string, nullable: true }
+        language:      { type: string, nullable: true }
+        error_code:    { type: string, nullable: true }
+        error_message: { type: string, nullable: true }
+        retry_after:   { type: string, format: date-time, nullable: true }
+        priority:      { type: integer }
+        started_at:    { type: string, format: date-time, nullable: true }
+        finished_at:   { type: string, format: date-time, nullable: true }
+        created_at:    { type: string, format: date-time }
+        updated_at:    { type: string, format: date-time }
+
+security:
+  - InternalKey: []
+
+paths:
+
+  /health:
+    get:
+      tags: [system]
+      summary: Health check
+      operationId: jobOrchestratorHealth
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:  { type: string }
+                  service: { type: string }
+
+  /jobs/{id}:
+    get:
+      tags: [jobs]
+      summary: Get job status
+      description: |
+        Returns the full durable job state including attempts, worker lease,
+        model provenance, and error details.
+      operationId: getJob
+      parameters:
+        - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Job detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Job' }
+              example:
+                id: "550e8400-e29b-41d4-a716-446655440000"
+                document_id: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+                tenant_id: "00000000-0000-0000-0000-000000000001"
+                task_type: "OCR"
+                state: "PROCESSING"
+                attempts: 1
+                max_attempts: 3
+                model_name: "tesseract"
+                model_version: "5.3.4"
+                language: "amh+eng"
+                priority: 5
+                created_at: "2026-10-14T10:00:00Z"
+                updated_at: "2026-10-14T10:00:05Z"
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /jobs/{id}/cancel:
+    post:
+      tags: [jobs]
+      summary: Cancel a job
+      description: |
+        Cancels a job that is in PENDING, QUEUED, or RETRYING state.
+        Cannot cancel jobs already in PROCESSING, COMPLETED, or CANCELLED.
+      operationId: cancelJob
+      parameters:
+        - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Job cancelled }
+        "409":
+          description: Cannot cancel in current state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        "404":
+          description: Job not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }

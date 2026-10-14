@@ -1,0 +1,255 @@
+openapi: "3.1.0"
+
+info:
+  title: EthioScript — Document Service API
+  version: "3.1.0"
+  description: |
+    **Internal microservice** — handles document lifecycle, metadata, review, and approval.
+
+    This service is called by the API Gateway; direct calls require the `X-Internal-Key` header.
+    Use the **API Gateway** (`http://localhost:6000/api/v1`) for external access.
+
+servers:
+  - url: http://localhost:6001/api/v1
+    description: Direct (internal / dev)
+  - url: http://localhost:6000/api/v1
+    description: Via API Gateway (recommended)
+
+tags:
+  - name: documents
+    description: Document lifecycle management
+  - name: system
+    description: Health and metrics
+
+components:
+  securitySchemes:
+    InternalKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Key
+      description: Internal service-to-service API key (injected by API Gateway)
+    TenantHeader:
+      type: apiKey
+      in: header
+      name: X-Tenant-ID
+      description: Tenant UUID (injected by API Gateway from JWT)
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+        code:  { type: string }
+
+    DocumentStatus:
+      type: string
+      enum: [UPLOADED, QUEUED, PROCESSING, REVIEW_REQUIRED, APPROVED, FAILED, CANCELLED, ARCHIVED, DELETED]
+
+    TaskType:
+      type: string
+      enum: [OCR, STT, CLASSIFICATION, EXPORT]
+
+    Document:
+      type: object
+      properties:
+        id:               { type: string, format: uuid }
+        tenant_id:        { type: string, format: uuid }
+        asset_id:         { type: string, format: uuid }
+        filename:         { type: string }
+        language:         { type: string, example: amh }
+        task_type:        { $ref: '#/components/schemas/TaskType' }
+        status:           { $ref: '#/components/schemas/DocumentStatus' }
+        title:            { type: string, nullable: true }
+        description:      { type: string, nullable: true }
+        tags:             { type: array, items: { type: string } }
+        page_count:       { type: integer, nullable: true }
+        duration_seconds: { type: number, nullable: true }
+        created_by:       { type: string, format: uuid }
+        approved_by:      { type: string, format: uuid, nullable: true }
+        approved_at:      { type: string, format: date-time, nullable: true }
+        created_at:       { type: string, format: date-time }
+        updated_at:       { type: string, format: date-time }
+
+    DocumentListResponse:
+      type: object
+      properties:
+        documents:   { type: array, items: { $ref: '#/components/schemas/Document' } }
+        total:       { type: integer }
+        page:        { type: integer }
+        page_size:   { type: integer }
+        total_pages: { type: integer }
+
+    CreateDocumentRequest:
+      type: object
+      required: [asset_id, filename]
+      properties:
+        asset_id:    { type: string, format: uuid }
+        filename:    { type: string }
+        language:    { type: string, default: amh }
+        task_type:   { $ref: '#/components/schemas/TaskType' }
+        title:       { type: string, nullable: true }
+        description: { type: string, nullable: true }
+        tags:        { type: array, items: { type: string } }
+
+    SaveDraftRequest:
+      type: object
+      required: [text]
+      properties:
+        text: { type: string }
+
+    ResultVersion:
+      type: object
+      properties:
+        id:               { type: string, format: uuid }
+        document_id:      { type: string, format: uuid }
+        version:          { type: integer }
+        is_approved:      { type: boolean }
+        approved_text:    { type: string, nullable: true }
+        confidence_score: { type: number, nullable: true }
+        model_metadata:   { type: object }
+        word_count:       { type: integer, nullable: true }
+        char_count:       { type: integer, nullable: true }
+        created_by:       { type: string, format: uuid }
+        approved_by:      { type: string, format: uuid, nullable: true }
+        approved_at:      { type: string, format: date-time, nullable: true }
+        created_at:       { type: string, format: date-time }
+
+security:
+  - InternalKey: []
+
+paths:
+
+  /health:
+    get:
+      tags: [system]
+      summary: Health check
+      operationId: docServiceHealth
+      security: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:  { type: string }
+                  service: { type: string }
+
+  /documents:
+    post:
+      tags: [documents]
+      summary: Create document + processing job
+      description: |
+        Atomically inserts document, processing job, and outbox event in one PostgreSQL transaction.
+        Returns immediately with QUEUED status.
+      operationId: createDocument
+      parameters:
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-Role, in: header, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateDocumentRequest' }
+      responses:
+        "201":
+          description: Document created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    get:
+      tags: [documents]
+      summary: List documents (tenant-scoped)
+      operationId: listDocuments
+      parameters:
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: page,        in: query,  schema: { type: integer, default: 1 } }
+        - { name: page_size,   in: query,  schema: { type: integer, default: 20 } }
+      responses:
+        "200":
+          description: Paginated list
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DocumentListResponse' }
+
+  /documents/{id}:
+    get:
+      tags: [documents]
+      summary: Get document by ID
+      operationId: getDocument
+      parameters:
+        - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Document detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Document' }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+    delete:
+      tags: [documents]
+      summary: Soft-delete document
+      operationId: deleteDocument
+      parameters:
+        - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Deleted }
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /documents/{id}/result/draft:
+    put:
+      tags: [documents]
+      summary: Save reviewer draft
+      operationId: saveDraft
+      parameters:
+        - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SaveDraftRequest' }
+      responses:
+        "204": { description: Draft saved }
+        "409":
+          description: Not in editable state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+
+  /documents/{id}/approve:
+    post:
+      tags: [documents]
+      summary: Approve document result
+      operationId: approveDocument
+      parameters:
+        - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204": { description: Approved }
+        "409":
+          description: Invalid state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }

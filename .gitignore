@@ -1,0 +1,47 @@
+# Secrets — never commit
+.env
+*.env.local
+*.pem
+*.key
+
+# Go
+**/vendor/
+**/*.exe
+**/*.test
+**/dist/
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/.venv/
+**/venv/
+**/.pytest_cache/
+**/*.egg-info/
+
+# Docker volumes / data
+postgres_data/
+redis_data/
+minio_data/
+rabbitmq_data/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# AI Evaluation — generated reports (keep .gitkeep, ignore outputs)
+tests/ai-evaluation/reports/*.json
+tests/ai-evaluation/reports/*.csv
+tests/ai-evaluation/reports/*.html
+tests/ai-evaluation/reports/*.txt
+tests/ai-evaluation/fixtures/test_images/synthetic/
+tests/ai-evaluation/fixtures/ground_truth/synthetic/
+
+# Test binaries
+tests/integration/*.test
+tests/e2e/*.test
+tests/security/*.test
+
+# Go build cache
+**/go.sum

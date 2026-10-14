@@ -1,0 +1,11 @@
+{
+  "language": "amh",
+  "document_class": "printed",
+  "font_info": "AbyssinicaSIL or system Ethiopic font",
+  "scan_dpi": 300,
+  "domain": "general",
+  "notes": "Sample printed Amharic text — three short sentences. Replace with real test data from documented sources.",
+  "permitted": true,
+  "source": "synthetic-sample",
+  "license": "public domain — generated for evaluation scaffold"
+}

@@ -1,0 +1,2 @@
+# Reports are generated at runtime — this directory is intentionally tracked but empty.
+# Generated reports (*.html, *.json, *.csv, *.txt) are git-ignored.
