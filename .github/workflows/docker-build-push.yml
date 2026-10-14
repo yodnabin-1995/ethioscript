@@ -38,19 +38,19 @@ jobs:
         include:
           - service: account-service
             context: ./services/account-service
-            port: 6000
+            target: production
           - service: document-service
             context: ./services/document-service
-            port: 6001
+            target: production
           - service: job-orchestrator
             context: ./services/job-orchestrator
-            port: 6002
+            target: production
           - service: ocr-worker
             context: ./services/ocr-worker
-            port: 6003
+            target: production
           - service: stt-worker
             context: ./services/stt-worker
-            port: 6004
+            target: production
 
     steps:
       - name: Checkout
@@ -89,7 +89,7 @@ jobs:
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.context }}/Dockerfile
-          target: production
+          target: ${{ matrix.target }}
           platforms: linux/amd64,linux/arm64
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}

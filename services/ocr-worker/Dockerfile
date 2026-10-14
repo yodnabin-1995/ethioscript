@@ -1,5 +1,5 @@
 # ── OCR Worker — Python + Tesseract + Amharic tessdata ────────────────────────
-FROM python:3.12-slim AS base
+FROM python:3.12-slim AS production
 
 # System deps: Tesseract 5 + Amharic + English tessdata, poppler (pdf2image),
 # libgl (OpenCV headless)

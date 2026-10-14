@@ -1,5 +1,5 @@
 # ── STT Worker — Python + Whisper (Release 2) ─────────────────────────────────
-FROM python:3.12-slim AS base
+FROM python:3.12-slim AS production
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \

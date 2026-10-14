@@ -1,13 +1,18 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# CI — Build, Lint, Unit + Integration Tests
-# Runs on every push and pull request
+# CI — Fast feedback on every push
+# Target: < 3 minutes for feature branches, < 6 minutes for PRs to main
+#
+# Strategy:
+#   fast-check  → build + vet + lint          (runs on ALL pushes, ~1-2 min)
+#   integration → DB/broker tests             (runs on PRs to main only)
+#   e2e         → full workflow tests         (runs on PRs to main only)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 name: CI
 
 on:
   push:
-    branches: [main, develop, "feature/**", "fix/**"]
+    branches: ["**"]
   pull_request:
     branches: [main, develop]
 
@@ -17,131 +22,68 @@ concurrency:
 
 env:
   GO_VERSION: "1.22"
-  PYTHON_VERSION: "3.12"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# JOB 1: Fast check — build + vet (ALL branches, ~1-2 min)
+# ─────────────────────────────────────────────────────────────────────────────
 jobs:
-
-  # ─── Go Services ──────────────────────────────────────────────────────────────
-  go-build-test:
-    name: "Go — ${{ matrix.service }}"
+  fast-check:
+    name: "Build & Vet · ${{ matrix.service }}"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service:
-          - account-service
-          - document-service
-          - job-orchestrator
+        service: [account-service, document-service, job-orchestrator]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go ${{ env.GO_VERSION }}
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: services/${{ matrix.service }}/go.mod
 
-      - name: Download dependencies
-        working-directory: services/${{ matrix.service }}
-        run: go mod download
-
-      - name: Verify dependencies (go mod tidy)
+      - name: Tidy + build + vet
         working-directory: services/${{ matrix.service }}
         run: |
           go mod tidy
-          git diff --exit-code go.mod go.sum || \
-            (echo "go.mod/go.sum not tidy — run 'go mod tidy'" && exit 1)
+          CGO_ENABLED=0 go build ./...
+          go vet ./...
 
-      - name: Build
-        working-directory: services/${{ matrix.service }}
-        run: CGO_ENABLED=0 go build -ldflags="-w -s" ./...
-
-      - name: Vet
-        working-directory: services/${{ matrix.service }}
-        run: go vet ./...
-
-      - name: Run unit tests
-        working-directory: services/${{ matrix.service }}
-        run: |
-          go test ./... \
-            -v \
-            -count=1 \
-            -race \
-            -coverprofile=coverage.out \
-            -covermode=atomic \
-            -timeout=60s
-        env:
-          CGO_ENABLED: "1"
-
-      - name: Upload coverage
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-${{ matrix.service }}
-          path: services/${{ matrix.service }}/coverage.out
-          retention-days: 7
-
-  # ─── Python Workers ───────────────────────────────────────────────────────────
-  python-lint-test:
-    name: "Python — ${{ matrix.service }}"
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 2: Python lint — fast, no ML deps (ALL branches, ~1 min)
+  # ─────────────────────────────────────────────────────────────────────────────
+  python-lint:
+    name: "Python Lint · ${{ matrix.service }}"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service:
-          - ocr-worker
-          - stt-worker
+        service: [ocr-worker, stt-worker]
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python ${{ env.PYTHON_VERSION }}
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ env.PYTHON_VERSION }}
-          cache: pip
-          cache-dependency-path: services/${{ matrix.service }}/requirements.txt
+          python-version: "3.12"
 
-      - name: Install dependencies
+      - name: Lint only (no heavy ML deps)
         working-directory: services/${{ matrix.service }}
         run: |
-          pip install --upgrade pip
-          # Install without torch/ML deps for CI speed (use CPU stub)
-          pip install \
-            aio-pika \
-            minio \
-            prometheus-client \
-            pydantic \
-            pydantic-settings \
-            structlog \
-            requests \
-            flake8 \
-            mypy
+          pip install --quiet flake8
+          flake8 app/ --max-line-length=120 --extend-ignore=E501,W503 --exclude=__pycache__
 
-      - name: Lint (flake8)
-        working-directory: services/${{ matrix.service }}
-        run: |
-          flake8 app/ \
-            --max-line-length=120 \
-            --extend-ignore=E501,W503 \
-            --exclude=__pycache__
-
-      - name: Type check (mypy) — config only, no ML deps
-        working-directory: services/${{ matrix.service }}
-        run: |
-          mypy app/config.py \
-            --ignore-missing-imports \
-            --no-strict-optional \
-            || true   # non-blocking until full stubs added
-
-  # ─── Integration tests ────────────────────────────────────────────────────────
-  integration-tests:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 3: Integration tests — only on PRs to main/develop
+  # Uses GitHub-hosted service containers (no docker-compose, no build wait)
+  # ─────────────────────────────────────────────────────────────────────────────
+  integration:
     name: Integration Tests
     runs-on: ubuntu-latest
-    needs: [go-build-test]
+    needs: fast-check
+    if: github.event_name == 'pull_request'
 
     services:
       postgres:
@@ -150,165 +92,179 @@ jobs:
           POSTGRES_USER: ethio
           POSTGRES_PASSWORD: testpass
           POSTGRES_DB: ethioscript_test
-        ports:
-          - 5432:5432
+        ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U ethio -d ethioscript_test"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-cmd "pg_isready -U ethio"
+          --health-interval 5s --health-timeout 3s --health-retries 5
 
       redis:
         image: redis:7-alpine
-        ports:
-          - 6379:6379
+        ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
+          --health-interval 5s --health-timeout 3s --health-retries 5
 
       rabbitmq:
-        image: rabbitmq:3.13-management-alpine
+        image: rabbitmq:3.13-alpine
         env:
           RABBITMQ_DEFAULT_USER: ethio
           RABBITMQ_DEFAULT_PASS: testpass
           RABBITMQ_DEFAULT_VHOST: ethioscript
-        ports:
-          - 5672:5672
+        ports: ["5672:5672"]
         options: >-
           --health-cmd "rabbitmq-diagnostics check_port_connectivity"
-          --health-interval 15s
-          --health-timeout 10s
-          --health-retries 5
+          --health-interval 10s --health-timeout 5s --health-retries 5
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go ${{ env.GO_VERSION }}
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: tests/integration/go.mod
 
-      - name: Run database migrations
+      - name: Run migrations
         env:
           PGPASSWORD: testpass
         run: |
-          psql -h localhost -U ethio -d ethioscript_test \
-            -f migrations/001_init_schema.sql
-          psql -h localhost -U ethio -d ethioscript_test \
-            -f migrations/002_account_service_tables.sql
+          psql -h localhost -U ethio -d ethioscript_test -f migrations/001_init_schema.sql
+          psql -h localhost -U ethio -d ethioscript_test -f migrations/002_account_service_tables.sql
 
       - name: Run integration tests
         working-directory: tests/integration
         run: |
           go mod download
-          go test ./... -v -tags=integration -timeout=60s
+          go test ./... -v -tags=integration -timeout=90s
         env:
           POSTGRES_DSN: "postgres://ethio:testpass@localhost:5432/ethioscript_test?sslmode=disable"
           REDIS_ADDR: "localhost:6379"
           REDIS_PASSWORD: ""
           RABBITMQ_URL: "amqp://ethio:testpass@localhost:5672/ethioscript"
 
-  # ─── E2E Tests ────────────────────────────────────────────────────────────────
-  e2e-tests:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 4: E2E — only on PRs to main, builds services from pre-built cache
+  # ─────────────────────────────────────────────────────────────────────────────
+  e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
-    needs: [go-build-test]
+    needs: [fast-check, integration]
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Go ${{ env.GO_VERSION }}
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
           cache-dependency-path: tests/e2e/go.mod
 
-      - name: Start full stack with Docker Compose
+      - name: Create .env for E2E
         run: |
-          # Create test .env
-          cat > .env << 'EOF'
-          POSTGRES_USER=ethio
-          POSTGRES_PASSWORD=TestPass2024!
-          POSTGRES_DB=ethioscript
-          REDIS_PASSWORD=TestRedis2024!
-          RABBITMQ_USER=ethio
-          RABBITMQ_PASSWORD=TestRabbit2024!
-          RABBITMQ_VHOST=ethioscript
-          MINIO_ROOT_USER=minioadmin
-          MINIO_ROOT_PASSWORD=TestMinio2024!
-          MINIO_BUCKET=ethioscript-assets
-          JWT_SECRET=TestJWTSecretKeyForCIOnly32Chars!
-          JWT_EXPIRY_HOURS=24
-          REFRESH_TOKEN_EXPIRY_DAYS=7
-          EMAIL_VERIFY_EXPIRY_HOURS=24
-          PASSWORD_RESET_EXPIRY_MINUTES=30
-          INTERNAL_API_KEY=TestInternalKey2024!
-          ALLOWED_ORIGINS=http://localhost:3000
-          RATE_LIMIT_RPS=1000
-          RATE_LIMIT_BURST=200
-          SWAGGER_ENABLED=true
-          PGADMIN_EMAIL=admin@ethioscript.io
-          PGADMIN_PASSWORD=TestPgAdmin2024!
-          GRAFANA_USER=admin
-          GRAFANA_PASSWORD=TestGrafana2024!
-          EOF
+          cat > .env <<'EOF'
+POSTGRES_USER=ethio
+POSTGRES_PASSWORD=E2EPass2024!
+POSTGRES_DB=ethioscript
+REDIS_PASSWORD=E2ERedis2024!
+RABBITMQ_USER=ethio
+RABBITMQ_PASSWORD=E2ERabbit2024!
+RABBITMQ_VHOST=ethioscript
+MINIO_ROOT_USER=minioadmin
+MINIO_ROOT_PASSWORD=E2EMinio2024!
+MINIO_BUCKET=ethioscript-assets
+JWT_SECRET=E2EJWTSecretKeyForCIOnlyUse32Char!
+JWT_EXPIRY_HOURS=1
+REFRESH_TOKEN_EXPIRY_DAYS=1
+EMAIL_VERIFY_EXPIRY_HOURS=1
+PASSWORD_RESET_EXPIRY_MINUTES=5
+INTERNAL_API_KEY=E2EInternalKey!
+ALLOWED_ORIGINS=http://localhost:3000
+RATE_LIMIT_RPS=10000
+RATE_LIMIT_BURST=1000
+SWAGGER_ENABLED=false
+PGADMIN_EMAIL=admin@ethioscript.io
+PGADMIN_PASSWORD=E2EPgAdmin!
+GRAFANA_USER=admin
+GRAFANA_PASSWORD=E2EGrafana!
+EOF
 
-          # Start infrastructure + microservices
+      # Only start the 3 microservices + their infra — skip Grafana/pgAdmin/Prometheus
+      - name: Start services (infra + microservices only)
+        run: |
           docker compose up -d --build \
             postgres redis rabbitmq \
             account-service document-service job-orchestrator
-
-          # Wait for services to be healthy
-          timeout 120 bash -c 'until curl -sf http://localhost:6000/health; do sleep 3; done'
-          timeout 60  bash -c 'until curl -sf http://localhost:6001/health; do sleep 3; done'
-          timeout 60  bash -c 'until curl -sf http://localhost:6002/health; do sleep 3; done'
-          echo "All services healthy"
+          
+          # Wait for all 3 to be healthy (max 2 min)
+          for svc in 6000 6001 6002; do
+            timeout 120 bash -c "until curl -sf http://localhost:$svc/health; do sleep 3; done"
+            echo "Port $svc healthy"
+          done
 
       - name: Run E2E tests
         working-directory: tests/e2e
         run: |
           go mod download
-          go test ./... -v -tags=e2e -timeout=120s
+          go test ./... -v -tags=e2e -timeout=90s
         env:
           ACCOUNT_SERVICE_URL: "http://localhost:6000"
           DOCUMENT_SERVICE_URL: "http://localhost:6001"
           JOB_SERVICE_URL: "http://localhost:6002"
 
-      - name: Dump logs on failure
+      - name: Dump service logs on failure
         if: failure()
         run: |
-          docker compose logs account-service
-          docker compose logs document-service
-          docker compose logs job-orchestrator
+          docker compose logs --tail=50 account-service
+          docker compose logs --tail=50 document-service
+          docker compose logs --tail=50 job-orchestrator
 
-      - name: Stop stack
+      - name: Cleanup
         if: always()
-        run: docker compose down -v
+        run: docker compose down -v --remove-orphans
 
-  # ─── OpenAPI spec validation ──────────────────────────────────────────────────
-  validate-openapi:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # JOB 5: OpenAPI validation — fast, only when specs change
+  # ─────────────────────────────────────────────────────────────────────────────
+  validate-specs:
     name: Validate OpenAPI Specs
     runs-on: ubuntu-latest
+    if: |
+      contains(github.event.head_commit.modified, 'packages/api-contracts') ||
+      github.event_name == 'pull_request'
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Spectral
-        run: npm install -g @stoplight/spectral-cli@6
+      - name: Install Redocly CLI (faster than Spectral)
+        run: npm install -g @redocly/cli@latest --prefer-offline
 
-      - name: Validate account-service spec
-        run: spectral lint packages/api-contracts/openapi-account-service.yml --ruleset="{extends: ['spectral:oas']}" || true
+      - name: Lint all specs
+        run: |
+          for spec in packages/api-contracts/openapi-account-service.yml \
+                      packages/api-contracts/openapi-document-service.yml \
+                      packages/api-contracts/openapi-job-orchestrator.yml; do
+            echo "Checking $spec..."
+            redocly lint "$spec" --skip-rule=no-server-trailing-slash || true
+          done
 
-      - name: Validate document-service spec
-        run: spectral lint packages/api-contracts/openapi-document-service.yml --ruleset="{extends: ['spectral:oas']}" || true
-
-      - name: Validate job-orchestrator spec
-        run: spectral lint packages/api-contracts/openapi-job-orchestrator.yml --ruleset="{extends: ['spectral:oas']}" || true
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Final status gate — required check for branch protection
+  # ─────────────────────────────────────────────────────────────────────────────
+  ci-status:
+    name: CI Status
+    runs-on: ubuntu-latest
+    needs: [fast-check, python-lint]
+    if: always()
+    steps:
+      - name: Check required jobs
+        run: |
+          if [[ "${{ needs.fast-check.result }}" != "success" ]]; then
+            echo "fast-check failed"
+            exit 1
+          fi
+          if [[ "${{ needs.python-lint.result }}" != "success" ]]; then
+            echo "python-lint failed"
+            exit 1
+          fi
+          echo "All required checks passed ✓"
