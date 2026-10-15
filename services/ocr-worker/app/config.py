@@ -1,6 +1,5 @@
 """OCR Worker configuration loaded from environment variables."""
 
-import os
 from pydantic_settings import BaseSettings
 from pydantic import Field
 

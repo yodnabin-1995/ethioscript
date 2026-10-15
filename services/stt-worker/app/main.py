@@ -30,9 +30,9 @@ logging.basicConfig(
 logger = logging.getLogger("stt-worker")
 
 # ── Prometheus metrics ────────────────────────────────────────────────────────
-JOBS_RECEIVED  = Counter("stt_jobs_received_total",  "Total STT jobs received")
+JOBS_RECEIVED = Counter("stt_jobs_received_total",  "Total STT jobs received")
 JOBS_SUCCEEDED = Counter("stt_jobs_succeeded_total", "Total STT jobs succeeded")
-JOBS_FAILED    = Counter("stt_jobs_failed_total",    "Total STT jobs failed", ["error_code"])
+JOBS_FAILED = Counter("stt_jobs_failed_total",    "Total STT jobs failed", ["error_code"])
 PROCESSING_DURATION = Histogram(
     "stt_processing_duration_seconds",
     "STT job processing duration",
@@ -50,10 +50,7 @@ async def process_message(message: aio_pika.IncomingMessage) -> dict:
 
         try:
             payload = json.loads(message.body)
-            job_id      = payload["job_id"]
-            document_id = payload["document_id"]
-            tenant_id   = payload["tenant_id"]
-            language    = payload.get("language", settings.stt_language)
+            job_id = payload["job_id"]
 
             logger.info("processing STT job %s", job_id)
 
@@ -121,7 +118,7 @@ async def main() -> None:
         logger.error("could not connect to RabbitMQ after 10 attempts")
         sys.exit(1)
 
-    channel  = await connection.channel()
+    channel = await connection.channel()
     await channel.set_qos(prefetch_count=settings.stt_worker_concurrency)
 
     stt_queue = await channel.declare_queue(settings.rabbitmq_queue_stt, durable=True)

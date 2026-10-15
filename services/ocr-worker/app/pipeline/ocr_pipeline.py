@@ -11,7 +11,6 @@ Pre-processing steps:
 
 import io
 import logging
-import math
 import os
 import time
 from dataclasses import dataclass, field
@@ -96,7 +95,7 @@ def run_ocr(file_bytes: bytes, media_type: str, language: str = None) -> OCRResu
         try:
             page_result = _process_page(image, i, lang)
             pages.append(page_result)
-        except Exception as exc:
+        except Exception:
             logger.exception("page %d processing failed", i)
             pages.append(PageResult(
                 page_number=i,
