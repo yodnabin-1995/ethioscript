@@ -290,14 +290,28 @@ class TestOCREvaluation:
 
         Failures here indicate the model needs improvement or the threshold
         needs to be updated based on actual baseline data.
+
+        Synthetic fixtures only smoke-test OCR and are excluded from the
+        accuracy gate until a real benchmark dataset is available.
         """
-        if not fixture_registry.fixtures:
-            pytest.skip("No fixtures available — add test images to fixtures/test_images/")
+        benchmark_fixtures = [
+            fixture for fixture in fixture_registry.fixtures
+            if fixture.document_class != "synthetic"
+        ]
+        if not benchmark_fixtures:
+            pytest.skip(
+                "No real benchmark fixtures available — synthetic fixtures only "
+                "validate that OCR runs"
+            )
 
         all_passed = True
         failed_fixtures = []
+        benchmark_ids = {fixture.fixture_id for fixture in benchmark_fixtures}
 
         for fixture, ground_truth in iter_fixtures(fixture_registry):
+            if fixture.fixture_id not in benchmark_ids:
+                continue
+
             hypothesis, duration = run_local_ocr(
                 fixture.image_path,
                 language=fixture.language or OCR_LANGUAGE,

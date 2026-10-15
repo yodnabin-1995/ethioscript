@@ -93,6 +93,21 @@ def save_csv_report(report: EvaluationReport, output_dir: Path = REPORTS_DIR) ->
     """Save per-document results as CSV."""
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"evaluation_{report.run_id}.csv"
+    fieldnames = [
+        "run_id",
+        "document_id",
+        "language",
+        "document_class",
+        "model_name",
+        "model_version",
+        "aggregate_cer",
+        "aggregate_wer",
+        "passed",
+        "page_count",
+        "total_ref_chars",
+        "total_ref_words",
+        "processing_secs",
+    ]
 
     rows = []
     for d in report.document_results:
@@ -112,11 +127,10 @@ def save_csv_report(report: EvaluationReport, output_dir: Path = REPORTS_DIR) ->
             "processing_secs": f"{d.processing_seconds:.2f}",
         })
 
-    if rows:
-        with open(path, "w", newline="", encoding="utf-8") as f:
-            writer = csv.DictWriter(f, fieldnames=rows[0].keys())
-            writer.writeheader()
-            writer.writerows(rows)
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
 
     logger.info("CSV report → %s", path)
     return path

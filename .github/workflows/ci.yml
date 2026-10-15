@@ -150,31 +150,31 @@ jobs:
       - name: Create .env
         run: |
           cat > .env <<'EOF'
-POSTGRES_USER=ethio
-POSTGRES_PASSWORD=E2EPass2024!
-POSTGRES_DB=ethioscript
-REDIS_PASSWORD=E2ERedis2024!
-RABBITMQ_USER=ethio
-RABBITMQ_PASSWORD=E2ERabbit2024!
-RABBITMQ_VHOST=ethioscript
-MINIO_ROOT_USER=minioadmin
-MINIO_ROOT_PASSWORD=E2EMinio2024!
-MINIO_BUCKET=ethioscript-assets
-JWT_SECRET=E2EJWTSecretKeyForCIOnlyUse32Char!
-JWT_EXPIRY_HOURS=1
-REFRESH_TOKEN_EXPIRY_DAYS=1
-EMAIL_VERIFY_EXPIRY_HOURS=1
-PASSWORD_RESET_EXPIRY_MINUTES=5
-INTERNAL_API_KEY=E2EInternalKey2024!
-ALLOWED_ORIGINS=http://localhost:3000
-RATE_LIMIT_RPS=10000
-RATE_LIMIT_BURST=1000
-SWAGGER_ENABLED=false
-PGADMIN_EMAIL=admin@ethioscript.io
-PGADMIN_PASSWORD=E2EPgAdmin!
-GRAFANA_USER=admin
-GRAFANA_PASSWORD=E2EGrafana!
-EOF
+          POSTGRES_USER=ethio
+          POSTGRES_PASSWORD=E2EPass2024!
+          POSTGRES_DB=ethioscript
+          REDIS_PASSWORD=E2ERedis2024!
+          RABBITMQ_USER=ethio
+          RABBITMQ_PASSWORD=E2ERabbit2024!
+          RABBITMQ_VHOST=ethioscript
+          MINIO_ROOT_USER=minioadmin
+          MINIO_ROOT_PASSWORD=E2EMinio2024!
+          MINIO_BUCKET=ethioscript-assets
+          JWT_SECRET=E2EJWTSecretKeyForCIOnlyUse32Char!
+          JWT_EXPIRY_HOURS=1
+          REFRESH_TOKEN_EXPIRY_DAYS=1
+          EMAIL_VERIFY_EXPIRY_HOURS=1
+          PASSWORD_RESET_EXPIRY_MINUTES=5
+          INTERNAL_API_KEY=E2EInternalKey2024!
+          ALLOWED_ORIGINS=http://localhost:3000
+          RATE_LIMIT_RPS=10000
+          RATE_LIMIT_BURST=1000
+          SWAGGER_ENABLED=false
+          PGADMIN_EMAIL=admin@ethioscript.io
+          PGADMIN_PASSWORD=E2EPgAdmin!
+          GRAFANA_USER=admin
+          GRAFANA_PASSWORD=E2EGrafana!
+          EOF
 
       - name: Start services
         run: |
