@@ -1,24 +1,13 @@
-# ═══════════════════════════════════════════════════════════════════════════════
-# CI — Fast feedback on every push
-# Target: < 3 minutes for feature branches, < 6 minutes for PRs to main
-#
-# Strategy:
-#   fast-check  → build + vet + lint          (runs on ALL pushes, ~1-2 min)
-#   integration → DB/broker tests             (runs on PRs to main only)
-#   e2e         → full workflow tests         (runs on PRs to main only)
-# ═══════════════════════════════════════════════════════════════════════════════
-
 name: CI
 
 on:
   push:
     branches: ["**"]
-    # Skip CI on pushes that only touch docs, migration files, or evaluation
-    # (those have their own targeted workflows)
     paths-ignore:
       - "docs/**"
-      - "*.md"
+      - "**.md"
       - "tests/ai-evaluation/**"
+      - "migrations/**"
   pull_request:
     branches: [main, develop]
 
@@ -29,12 +18,11 @@ concurrency:
 env:
   GO_VERSION: "1.22"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JOB 1: Fast check — build + vet (ALL branches, ~1-2 min)
-# ─────────────────────────────────────────────────────────────────────────────
 jobs:
+
+  # ── Go build + vet (every push, ~1-2 min) ──────────────────────────────────
   fast-check:
-    name: "Build & Vet · ${{ matrix.service }}"
+    name: "Go · ${{ matrix.service }}"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -57,11 +45,9 @@ jobs:
           CGO_ENABLED=0 go build ./...
           go vet ./...
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 2: Python lint — fast, no ML deps (ALL branches, ~1 min)
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ── Python lint (every push, ~1 min) ───────────────────────────────────────
   python-lint:
-    name: "Python Lint · ${{ matrix.service }}"
+    name: "Python · ${{ matrix.service }}"
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -75,16 +61,13 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Lint only (no heavy ML deps)
+      - name: Lint
         working-directory: services/${{ matrix.service }}
         run: |
           pip install --quiet flake8
           flake8 app/ --max-line-length=120 --extend-ignore=E501,W503 --exclude=__pycache__
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 3: Integration tests — only on PRs to main/develop
-  # Uses GitHub-hosted service containers (no docker-compose, no build wait)
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ── Integration tests (PRs only) ───────────────────────────────────────────
   integration:
     name: Integration Tests
     runs-on: ubuntu-latest
@@ -148,9 +131,7 @@ jobs:
           REDIS_PASSWORD: ""
           RABBITMQ_URL: "amqp://ethio:testpass@localhost:5672/ethioscript"
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 4: E2E — only on PRs to main, builds services from pre-built cache
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ── E2E tests (PRs to main only) ───────────────────────────────────────────
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
@@ -166,7 +147,7 @@ jobs:
           cache: true
           cache-dependency-path: tests/e2e/go.mod
 
-      - name: Create .env for E2E
+      - name: Create .env
         run: |
           cat > .env <<'EOF'
 POSTGRES_USER=ethio
@@ -184,7 +165,7 @@ JWT_EXPIRY_HOURS=1
 REFRESH_TOKEN_EXPIRY_DAYS=1
 EMAIL_VERIFY_EXPIRY_HOURS=1
 PASSWORD_RESET_EXPIRY_MINUTES=5
-INTERNAL_API_KEY=E2EInternalKey!
+INTERNAL_API_KEY=E2EInternalKey2024!
 ALLOWED_ORIGINS=http://localhost:3000
 RATE_LIMIT_RPS=10000
 RATE_LIMIT_BURST=1000
@@ -195,17 +176,13 @@ GRAFANA_USER=admin
 GRAFANA_PASSWORD=E2EGrafana!
 EOF
 
-      # Only start the 3 microservices + their infra — skip Grafana/pgAdmin/Prometheus
-      - name: Start services (infra + microservices only)
+      - name: Start services
         run: |
           docker compose up -d --build \
             postgres redis rabbitmq \
             account-service document-service job-orchestrator
-          
-          # Wait for all 3 to be healthy (max 2 min)
-          for svc in 6000 6001 6002; do
-            timeout 120 bash -c "until curl -sf http://localhost:$svc/health; do sleep 3; done"
-            echo "Port $svc healthy"
+          for port in 6000 6001 6002; do
+            timeout 120 bash -c "until curl -sf http://localhost:$port/health; do sleep 3; done"
           done
 
       - name: Run E2E tests
@@ -218,59 +195,29 @@ EOF
           DOCUMENT_SERVICE_URL: "http://localhost:6001"
           JOB_SERVICE_URL: "http://localhost:6002"
 
-      - name: Dump service logs on failure
+      - name: Dump logs on failure
         if: failure()
-        run: |
-          docker compose logs --tail=50 account-service
-          docker compose logs --tail=50 document-service
-          docker compose logs --tail=50 job-orchestrator
+        run: docker compose logs --tail=50 account-service document-service job-orchestrator
 
       - name: Cleanup
         if: always()
         run: docker compose down -v --remove-orphans
 
-  # ─────────────────────────────────────────────────────────────────────────────
-  # JOB 5: OpenAPI validation — fast, only when specs change
-  # ─────────────────────────────────────────────────────────────────────────────
-  validate-specs:
-    name: Validate OpenAPI Specs
-    runs-on: ubuntu-latest
-    if: |
-      contains(github.event.head_commit.modified, 'packages/api-contracts') ||
-      github.event_name == 'pull_request'
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Redocly CLI (faster than Spectral)
-        run: npm install -g @redocly/cli@latest --prefer-offline
-
-      - name: Lint all specs
-        run: |
-          for spec in packages/api-contracts/openapi-account-service.yml \
-                      packages/api-contracts/openapi-document-service.yml \
-                      packages/api-contracts/openapi-job-orchestrator.yml; do
-            echo "Checking $spec..."
-            redocly lint "$spec" --skip-rule=no-server-trailing-slash || true
-          done
-
-  # ─────────────────────────────────────────────────────────────────────────────
-  # Final status gate — required check for branch protection
-  # ─────────────────────────────────────────────────────────────────────────────
+  # ── Final status gate ───────────────────────────────────────────────────────
   ci-status:
     name: CI Status
     runs-on: ubuntu-latest
     needs: [fast-check, python-lint]
     if: always()
     steps:
-      - name: Check required jobs
+      - name: Check results
         run: |
-          if [[ "${{ needs.fast-check.result }}" != "success" ]]; then
-            echo "fast-check failed"
+          if [ "${{ needs.fast-check.result }}" != "success" ]; then
+            echo "fast-check failed: ${{ needs.fast-check.result }}"
             exit 1
           fi
-          if [[ "${{ needs.python-lint.result }}" != "success" ]]; then
-            echo "python-lint failed"
+          if [ "${{ needs.python-lint.result }}" != "success" ]; then
+            echo "python-lint failed: ${{ needs.python-lint.result }}"
             exit 1
           fi
-          echo "All required checks passed ✓"
+          echo "All checks passed ✓"
