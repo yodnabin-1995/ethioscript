@@ -1,18 +1,13 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 # AI Evaluation — OCR CER/WER Benchmark
-# Runs on push to main and weekly to track model quality over time
+# Runs on pull requests, weekly, or manually to track model quality over time
 # SRS Section 7.3: Publish measured CER/WER on documented test sets
 # ═══════════════════════════════════════════════════════════════════════════════
 
 name: AI Evaluation
 
 on:
-  # Only runs when OCR worker or evaluation code actually changes
-  push:
-    branches: [main]
-    paths:
-      - "services/ocr-worker/**"
-      - "tests/ai-evaluation/**"
+  # Keep push runs to CI; benchmark changes are evaluated on PRs, weekly, or manually.
   pull_request:
     branches: [main]
     paths:
