@@ -7,12 +7,13 @@
 name: Migrations
 
 on:
+  # Only runs when migration files actually change
   push:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "migrations/**"
   pull_request:
-    branches: [main, develop]
+    branches: [main]
     paths:
       - "migrations/**"
 

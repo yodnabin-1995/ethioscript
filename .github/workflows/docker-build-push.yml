@@ -7,12 +7,17 @@
 name: Docker Build & Push
 
 on:
+  # Only runs when a version tag is pushed (e.g. v1.0.0)
+  # OR manually dispatched — NOT on every push to main
   push:
-    branches: [main]
     tags:
       - "v*.*.*"
-  # No pull_request trigger — Docker builds only happen after merge to main
-  # This prevents duplicate runs on PR push
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Reason for manual build"
+        required: false
+        default: "manual build"
 
 concurrency:
   group: docker-${{ github.ref }}

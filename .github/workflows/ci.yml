@@ -13,6 +13,12 @@ name: CI
 on:
   push:
     branches: ["**"]
+    # Skip CI on pushes that only touch docs, migration files, or evaluation
+    # (those have their own targeted workflows)
+    paths-ignore:
+      - "docs/**"
+      - "*.md"
+      - "tests/ai-evaluation/**"
   pull_request:
     branches: [main, develop]
 
