@@ -231,7 +231,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redispass}
       REDIS_DB: "0"
       # CORS
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:6005}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:6005,http://127.0.0.1:6005}
       # Rate limiting
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-100}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-20}
@@ -456,6 +456,5 @@ services:
       "
     networks:
       - ethioscript-net
-
 
 

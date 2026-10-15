@@ -56,10 +56,10 @@ type SwaggerConfig struct {
 }
 
 type SecurityConfig struct {
-	MaxLoginAttempts  int
-	LockoutMinutes    int
-	BcryptCost        int
-	InternalAPIKey    string
+	MaxLoginAttempts int
+	LockoutMinutes   int
+	BcryptCost       int
+	InternalAPIKey   string
 }
 
 func Load() (*Config, error) {
@@ -88,8 +88,8 @@ func Load() (*Config, error) {
 	cfg.Redis.Password = getEnv("REDIS_PASSWORD", "")
 	cfg.Redis.DB, _ = strconv.Atoi(getEnv("REDIS_DB", "0"))
 
-	originsRaw := getEnv("ALLOWED_ORIGINS", "http://localhost:3000")
-	cfg.CORS.AllowedOrigins = strings.Split(originsRaw, ",")
+	originsRaw := getEnv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:6005,http://127.0.0.1:6005")
+	cfg.CORS.AllowedOrigins = parseAllowedOrigins(originsRaw)
 
 	cfg.Rate.RPS, _ = strconv.Atoi(getEnv("RATE_LIMIT_RPS", "100"))
 	cfg.Rate.Burst, _ = strconv.Atoi(getEnv("RATE_LIMIT_BURST", "20"))
@@ -109,6 +109,14 @@ func getEnv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func parseAllowedOrigins(raw string) []string {
+	origins := strings.Split(raw, ",")
+	for i := range origins {
+		origins[i] = strings.TrimSpace(origins[i])
+	}
+	return origins
 }
 
 func mustGetEnv(key string) string {
