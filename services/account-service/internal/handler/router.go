@@ -40,7 +40,7 @@ func NewRouter(
 	r.Use(middleware.Recoverer(log))
 	r.Use(middleware.SecureHeaders)
 	r.Use(chimiddleware.RealIP)
-	r.Use(chimiddleware.StripSlashes)
+	// NOTE: StripSlashes intentionally removed — it breaks /docs/ → Swagger UI
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   cfg.CORS.AllowedOrigins,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"},
@@ -65,6 +65,7 @@ func NewRouter(
 
 	// ── Swagger UI ────────────────────────────────────────────────────────────
 	if cfg.Swagger.Enabled {
+		// Serve the raw OpenAPI spec
 		r.Get("/docs/openapi.yml", func(w http.ResponseWriter, r *http.Request) {
 			data, err := openapiFS.ReadFile("docs/openapi.yml")
 			if err != nil {
@@ -75,13 +76,17 @@ func NewRouter(
 			w.Header().Set("Access-Control-Allow-Origin", "*")
 			_, _ = w.Write(data)
 		})
-		r.Get("/docs", http.RedirectHandler("/docs/index.html", http.StatusMovedPermanently).ServeHTTP)
-		r.Get("/docs/*", httpSwagger.Handler(
+
+		// Swagger UI — serve on both /docs and /docs/* so browser navigation works
+		swaggerHandler := httpSwagger.Handler(
 			httpSwagger.URL("/docs/openapi.yml"),
 			httpSwagger.DeepLinking(true),
 			httpSwagger.DocExpansion("list"),
 			httpSwagger.PersistAuthorization(true),
-		))
+		)
+		r.Get("/docs", swaggerHandler)
+		r.Get("/docs/", swaggerHandler)
+		r.Get("/docs/*", swaggerHandler)
 	}
 
 	// ══════════════════════════════════════════════════════════════════════════

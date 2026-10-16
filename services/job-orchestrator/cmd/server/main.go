@@ -114,7 +114,7 @@ func main() {
 	// ── HTTP router ───────────────────────────────────────────────────────
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RealIP)
-	r.Use(chimiddleware.StripSlashes)
+	// StripSlashes removed — breaks /docs/ Swagger navigation
 
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -127,14 +127,17 @@ func main() {
 	r.Get("/docs/openapi.yml", func(w http.ResponseWriter, r *http.Request) {
 		data, _ := openapiSpec.ReadFile("docs/openapi.yml")
 		w.Header().Set("Content-Type", "application/yaml")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
 		_, _ = w.Write(data)
 	})
-	r.Get("/docs", http.RedirectHandler("/docs/index.html", http.StatusMovedPermanently).ServeHTTP)
-	r.Get("/docs/*", httpSwagger.Handler(
+	swaggerHandlerJob := httpSwagger.Handler(
 		httpSwagger.URL("/docs/openapi.yml"),
 		httpSwagger.DeepLinking(true),
 		httpSwagger.DocExpansion("list"),
-	))
+	)
+	r.Get("/docs", swaggerHandlerJob)
+	r.Get("/docs/", swaggerHandlerJob)
+	r.Get("/docs/*", swaggerHandlerJob)
 
 	// Clean routes — no /api/v1 prefix
 	r.Get("/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
