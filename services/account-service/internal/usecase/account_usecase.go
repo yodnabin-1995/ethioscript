@@ -28,8 +28,13 @@ func NewAccountUseCase(repo *repository.AccountRepo, jwt *auth.Manager, cfg *con
 // ─── Registration ─────────────────────────────────────────────────────────────
 
 func (uc *AccountUseCase) Register(ctx context.Context, req domain.RegisterRequest) (*domain.TokenResponse, error) {
-	if req.Email == "" || req.Password == "" || req.Name == "" || req.TenantSlug == "" {
-		return nil, fmt.Errorf("%w: email, password, name, tenant_slug are required", domain.ErrValidation)
+	if req.Email == "" || req.Password == "" || req.Name == "" {
+		return nil, fmt.Errorf("%w: email, password, and name are required", domain.ErrValidation)
+	}
+
+	// Default to the "default" tenant when none is specified
+	if req.TenantSlug == "" {
+		req.TenantSlug = "default"
 	}
 
 	tenant, err := uc.repo.GetTenantBySlug(ctx, req.TenantSlug)

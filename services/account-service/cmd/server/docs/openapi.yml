@@ -112,12 +112,12 @@ components:
 
     RegisterRequest:
       type: object
-      required: [tenant_slug, name, email, password]
+      required: [name, email, password]
       properties:
         tenant_slug:
           type: string
           example: default
-          description: Slug of the tenant to register under
+          description: Slug of the tenant to register under. Defaults to "default" if omitted.
         name:
           type: string
           example: Abebe Kebede
@@ -282,7 +282,6 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/RegisterRequest' }
             example:
-              tenant_slug: default
               name: Abebe Kebede
               email: abebe@example.com
               password: Secret123
