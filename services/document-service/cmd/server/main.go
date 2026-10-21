@@ -72,6 +72,9 @@ func main() {
 	r.Use(chimiddleware.RealIP)
 	// StripSlashes removed — breaks /docs/ Swagger navigation
 
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
+	})
 	r.Get("/health", docH.Health)
 	r.Handle("/metrics", promhttp.Handler())
 

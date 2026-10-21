@@ -8,12 +8,11 @@ Ethiopic-script document intelligence and regional-language speech transcription
 
 | Port | Service | Stack | Description |
 |------|---------|-------|-------------|
-| **6000** | **account-service** | Go + chi + JWT | Auth, users, tenants, API keys |
+| **8000** | **account-service** | Go + chi + JWT | Auth, users, tenants, API keys |
 | 6001 | document-service | Go + chi | Document lifecycle, OCR jobs |
 | 6002 | job-orchestrator | Go + chi | Job state, outbox, retries |
 | 6003 | ocr-worker metrics | Python | Prometheus metrics endpoint |
 | 6004 | stt-worker metrics | Python | Prometheus metrics endpoint |
-| **6005** | **swagger-ui** | Nginx | Aggregated API docs (all 3 specs) |
 | 6100 | pgadmin | — | PostgreSQL admin UI |
 | 6200 | prometheus | — | Metrics scraper |
 | 6201 | grafana | — | Dashboards |
@@ -123,12 +122,13 @@ curl -s -X POST http://localhost:6000/api-keys \
 
 ## Swagger UI
 
+Each service hosts its own embedded Swagger UI:
+
 | URL | Description |
 |-----|-------------|
-| **http://localhost:6005** | Aggregated — tab between Account, Document, Job specs |
-| http://localhost:6000/docs | Account Service embedded Swagger |
-| http://localhost:6001/docs | Document Service embedded Swagger |
-| http://localhost:6002/docs | Job Orchestrator embedded Swagger |
+| http://localhost:8000/docs | Account Service Swagger |
+| http://localhost:6001/docs | Document Service Swagger |
+| http://localhost:6002/docs | Job Orchestrator Swagger |
 
 ---
 

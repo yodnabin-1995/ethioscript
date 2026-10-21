@@ -191,7 +191,7 @@ jobs:
           go mod download
           go test ./... -v -tags=e2e -timeout=90s
         env:
-          ACCOUNT_SERVICE_URL: "http://localhost:6000"
+          ACCOUNT_SERVICE_URL: "http://localhost:8000"
           DOCUMENT_SERVICE_URL: "http://localhost:6001"
           JOB_SERVICE_URL: "http://localhost:6002"
 

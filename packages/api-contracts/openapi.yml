@@ -1,12 +1,12 @@
-openapi: "3.1.0"
+openapi: "3.0.3"
 
 info:
   title: EthioScript & Voice AI — API
-  version: "3.1.0"
+  version: "1.0.0"
   description: |
     Ethiopic-script document intelligence and regional-language speech transcription platform.
 
-    **Base URL:** `http://localhost:6000/api/v1`
+    **Base URL:** `http://localhost:8000`
 
     **Authentication:** All protected endpoints require a Bearer JWT obtained from `/auth/login`.
     Include it as: `Authorization: Bearer <token>`
@@ -17,8 +17,8 @@ info:
     name: Proprietary
 
 servers:
-  - url: http://localhost:6000/api/v1
-    description: Local development
+  - url: http://localhost:8000
+    description: Local development (host port 8000; Chrome blocks port 6000)
   - url: https://api.ethioscript.io/api/v1
     description: Production
 

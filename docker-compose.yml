@@ -1,22 +1,22 @@
-﻿# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-#  EthioScript & Voice AI â€” Microservices Docker Compose
+# ═══════════════════════════════════════════════════════════════════════════════
+#  EthioScript & Voice AI — Microservices Docker Compose
 #  Port map:
-#    6000  â†’ api-gateway          (public entry point)
-#    6001  â†’ document-service     (internal)
-#    6002  â†’ job-orchestrator     (internal)
-#    6003  â†’ ocr-worker metrics   (internal, Prometheus scrape)
-#    6004  â†’ stt-worker metrics   (internal, Prometheus scrape)
-#    6005  â†’ swagger-ui           (API docs)
-#    6100  â†’ pgadmin              (DB admin UI)
-#    6200  â†’ prometheus           (metrics)
-#    6201  â†’ grafana              (dashboards)
-#    6300  â†’ postgres             (exposed for local dev tools)
-#    6301  â†’ redis                (exposed for local dev tools)
-#    6302  â†’ minio API            (object storage API)
-#    6303  â†’ minio console        (object storage UI)
-#    6304  â†’ rabbitmq AMQP        (message broker)
-#    6305  â†’ rabbitmq management  (broker UI)
-# â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+#    6000  → api-gateway          (public entry point)
+#    6001  → document-service     (internal)
+#    6002  → job-orchestrator     (internal)
+#    6003  → ocr-worker metrics   (internal, Prometheus scrape)
+#    6004  → stt-worker metrics   (internal, Prometheus scrape)
+#    6005  → swagger-ui           (API docs)
+#    6100  → pgadmin              (DB admin UI)
+#    6200  → prometheus           (metrics)
+#    6201  → grafana              (dashboards)
+#    6300  → postgres             (exposed for local dev tools)
+#    6301  → redis                (exposed for local dev tools)
+#    6302  → minio API            (object storage API)
+#    6303  → minio console        (object storage UI)
+#    6304  → rabbitmq AMQP        (message broker)
+#    6305  → rabbitmq management  (broker UI)
+# ═══════════════════════════════════════════════════════════════════════════════
 
 networks:
   ethioscript-net:
@@ -35,9 +35,9 @@ volumes:
 
 services:
 
-  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ───────────────────────────────────────────────────────────────────────────
   # INFRASTRUCTURE
-  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ───────────────────────────────────────────────────────────────────────────
 
   postgres:
     image: postgres:16-alpine
@@ -122,9 +122,9 @@ services:
     networks:
       - ethioscript-net
 
-  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ───────────────────────────────────────────────────────────────────────────
   # ADMIN / OBSERVABILITY TOOLS
-  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ───────────────────────────────────────────────────────────────────────────
 
   pgadmin:
     image: dpage/pgadmin4:latest
@@ -177,34 +177,9 @@ services:
     networks:
       - ethioscript-net
 
-  # Aggregated Swagger UI â€” serves all 4 service specs via tabbed UI on :6005
-  # Individual embedded Swagger UIs:
-  #   Account Service  â†’ http://localhost:6000/docs
-  #   Document Service â†’ http://localhost:6001/docs
-  #   Job Orchestrator â†’ http://localhost:6002/docs
-  swagger-ui:
-    image: nginx:1.27-alpine
-    container_name: ethioscript-swagger-ui
-    restart: unless-stopped
-    ports:
-      - "6005:8080"
-    volumes:
-      - ./deployments/compose/nginx-swagger.conf:/etc/nginx/conf.d/default.conf:ro
-      - ./deployments/compose/swagger-index.html:/usr/share/nginx/html/index.html:ro
-      - ./packages/api-contracts/openapi-account-service.yml:/usr/share/nginx/html/specs/openapi-account-service.yml:ro
-      - ./packages/api-contracts/openapi-document-service.yml:/usr/share/nginx/html/specs/openapi-document-service.yml:ro
-      - ./packages/api-contracts/openapi-job-orchestrator.yml:/usr/share/nginx/html/specs/openapi-job-orchestrator.yml:ro
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 15s
-      timeout: 5s
-      retries: 3
-    networks:
-      - ethioscript-net
-
-  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ───────────────────────────────────────────────────────────────────────────
   # MICROSERVICES
-  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ───────────────────────────────────────────────────────────────────────────
 
   account-service:
     build:
@@ -214,7 +189,7 @@ services:
     container_name: ethioscript-account-service
     restart: unless-stopped
     ports:
-      - "6000:6000"
+      - "8000:6000"
     environment:
       PORT: "6000"
       ENV: ${ENV:-development}
@@ -231,7 +206,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-redispass}
       REDIS_DB: "0"
       # CORS
-      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:6005,http://127.0.0.1:6005}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000}
       # Rate limiting
       RATE_LIMIT_RPS: ${RATE_LIMIT_RPS:-100}
       RATE_LIMIT_BURST: ${RATE_LIMIT_BURST:-20}
@@ -431,9 +406,9 @@ services:
     networks:
       - ethioscript-net
 
-  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ───────────────────────────────────────────────────────────────────────────
   # ONE-TIME INIT JOBS
-  # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  # ───────────────────────────────────────────────────────────────────────────
 
   minio-init:
     build:

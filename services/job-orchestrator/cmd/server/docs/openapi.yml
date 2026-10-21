@@ -1,20 +1,20 @@
-openapi: "3.1.0"
+openapi: "3.0.3"
 
 info:
   title: EthioScript — Job Orchestrator API
-  version: "3.1.0"
+  version: "1.0.0"
   description: |
     **Internal microservice** — manages durable processing job state, outbox publishing,
     lease/heartbeat, retry policy, and dead-letter routing.
 
     Direct calls require the `X-Internal-Key` header.
-    Use the **API Gateway** (`http://localhost:6000/api/v1`) for external access.
+    Use the **Account Service** (`http://localhost:8000`) for external access.
 
 servers:
   - url: http://localhost:6002/api/v1
     description: Direct (internal / dev)
-  - url: http://localhost:6000/api/v1
-    description: Via API Gateway (recommended)
+  - url: http://localhost:8000
+    description: Via Account Service (recommended)
 
 tags:
   - name: jobs

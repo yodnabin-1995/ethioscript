@@ -59,6 +59,10 @@ func NewRouter(
 	healthH  := NewHealthHandler(db, rdb)
 
 	// ── System routes (no auth) ───────────────────────────────────────────────
+	// Root → redirect to Swagger UI so browsing http://localhost:6000/ works
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
+	})
 	r.Get("/health", healthH.Health)
 	r.Get("/ready", healthH.Readiness)
 	r.Handle("/metrics", promhttp.Handler())

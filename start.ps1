@@ -56,7 +56,7 @@ Start-Sleep -Seconds 5
 # Step 4: Start observability + init jobs
 Write-Host ""
 Write-Host "[4/5] Starting observability and admin tools..." -ForegroundColor Yellow
-docker compose up -d pgadmin prometheus grafana swagger-ui 2>&1
+docker compose up -d pgadmin prometheus grafana 2>&1
 docker compose up -d minio-init 2>&1
 Start-Sleep -Seconds 5
 
@@ -73,7 +73,9 @@ Write-Host "  To build and start microservices, run:" -ForegroundColor White
 Write-Host "    docker compose up -d --build account-service document-service job-orchestrator ocr-worker stt-worker" -ForegroundColor White
 Write-Host ""
 Write-Host "  URLs:" -ForegroundColor White
-Write-Host "    Swagger UI  → http://localhost:6005" -ForegroundColor Cyan
+Write-Host "    Account Service → http://localhost:8000/docs" -ForegroundColor Cyan
+Write-Host "    Document Service → http://localhost:6001/docs" -ForegroundColor Cyan
+Write-Host "    Job Orchestrator → http://localhost:6002/docs" -ForegroundColor Cyan
 Write-Host "    pgAdmin     → http://localhost:6100" -ForegroundColor Cyan
 Write-Host "    RabbitMQ    → http://localhost:6305" -ForegroundColor Cyan
 Write-Host "    MinIO       → http://localhost:6303" -ForegroundColor Cyan

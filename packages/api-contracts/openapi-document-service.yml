@@ -1,18 +1,18 @@
-openapi: "3.1.0"
+openapi: "3.0.3"
 
 info:
   title: EthioScript — Document Service API
-  version: "3.1.0"
+  version: "1.0.0"
   description: |
     **Internal microservice** — handles document lifecycle, metadata, review, and approval.
 
     This service is called by the API Gateway; direct calls require the `X-Internal-Key` header.
-    Use the **API Gateway** (`http://localhost:6000/api/v1`) for external access.
+    Use the **Account Service** (`http://localhost:8000`) for external access.
 
 servers:
   - url: http://localhost:6001
     description: Direct (internal / dev)
-  - url: http://localhost:6000
+  - url: http://localhost:8000
     description: Via Account Service (JWT verified)
 
 tags:

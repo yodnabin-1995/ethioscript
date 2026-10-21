@@ -88,7 +88,7 @@ func Load() (*Config, error) {
 	cfg.Redis.Password = getEnv("REDIS_PASSWORD", "")
 	cfg.Redis.DB, _ = strconv.Atoi(getEnv("REDIS_DB", "0"))
 
-	originsRaw := getEnv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:6005,http://127.0.0.1:6005")
+	originsRaw := getEnv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000")
 	cfg.CORS.AllowedOrigins = parseAllowedOrigins(originsRaw)
 
 	cfg.Rate.RPS, _ = strconv.Atoi(getEnv("RATE_LIMIT_RPS", "100"))
