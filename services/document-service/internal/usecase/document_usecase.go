@@ -51,6 +51,10 @@ func (uc *DocumentUseCase) CreateDocument(ctx context.Context, tenantID, userID 
 	if taskType == "" {
 		taskType = domain.TaskOCR
 	}
+	// tags is NOT NULL in DB — default to empty slice when not provided
+	if req.Tags == nil {
+		req.Tags = []string{}
+	}
 
 	docID := uuid.New()
 	jobID := uuid.New()
