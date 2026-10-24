@@ -144,7 +144,7 @@ def run_stt(
         try:
             chunk_segs = _transcribe_chunk(model, chunk, language, offset)
             all_segments.extend(chunk_segs)
-        except Exception as exc:
+        except Exception:
             logger.exception("chunk %d transcription failed", i)
             # Continue with remaining chunks rather than aborting
         offset += len(chunk) / 1000.0

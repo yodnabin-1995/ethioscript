@@ -31,9 +31,9 @@ logging.basicConfig(
 logger = logging.getLogger("stt-worker")
 
 # ── Prometheus metrics ─────────────────────────────────────────────────────────
-JOBS_RECEIVED  = Counter("stt_jobs_received_total",  "Total STT jobs received")
+JOBS_RECEIVED = Counter("stt_jobs_received_total", "Total STT jobs received")
 JOBS_SUCCEEDED = Counter("stt_jobs_succeeded_total", "Total STT jobs succeeded")
-JOBS_FAILED    = Counter("stt_jobs_failed_total",    "Total STT jobs failed", ["error_code"])
+JOBS_FAILED = Counter("stt_jobs_failed_total", "Total STT jobs failed", ["error_code"])
 PROCESSING_DURATION = Histogram(
     "stt_processing_duration_seconds",
     "STT job processing duration",
@@ -51,11 +51,11 @@ async def process_message(message: aio_pika.IncomingMessage) -> dict:
 
         try:
             payload = json.loads(message.body)
-            job_id       = payload["job_id"]
-            document_id  = payload["document_id"]
-            tenant_id    = payload["tenant_id"]
-            asset_key    = payload["asset_id"]      # MinIO object key
-            language     = payload.get("language", settings.stt_language)
+            job_id = payload["job_id"]
+            document_id = payload["document_id"]
+            tenant_id = payload["tenant_id"]
+            asset_key = payload["asset_id"]      # MinIO object key
+            language = payload.get("language", settings.stt_language)
 
             logger.info("processing STT job %s (document: %s)", job_id, document_id)
 
@@ -91,19 +91,19 @@ async def process_message(message: aio_pika.IncomingMessage) -> dict:
 
             # 4. Build result message
             result_msg = {
-                "job_id":            job_id,
-                "document_id":       document_id,
-                "tenant_id":         tenant_id,
-                "success":           True,
-                "raw_text_key":       transcript_key,
-                "model_name":         result.model_name,
-                "model_version":      result.model_version,
-                "language":           result.language,
-                "confidence_score":   0.0,    # Whisper doesn't provide confidence
-                "page_count":         0,
-                "word_count":         result.word_count,
-                "char_count":         len(result.full_text),
-                "processed_at":       datetime.now(timezone.utc).isoformat(),
+                "job_id": job_id,
+                "document_id": document_id,
+                "tenant_id": tenant_id,
+                "success": True,
+                "raw_text_key": transcript_key,
+                "model_name": result.model_name,
+                "model_version": result.model_version,
+                "language": result.language,
+                "confidence_score": 0.0,
+                "page_count": 0,
+                "word_count": result.word_count,
+                "char_count": len(result.full_text),
+                "processed_at": datetime.now(timezone.utc).isoformat(),
             }
 
             duration = time.monotonic() - start
