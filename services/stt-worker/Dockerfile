@@ -15,14 +15,16 @@ COPY requirements.txt .
 # Install in three steps:
 # 1. Pin setuptools to a version that still ships pkg_resources (openai-whisper needs it)
 # 2. Install torch/torchaudio CPU-only wheels (~250 MB vs ~2 GB for CUDA)
-# 3. Install remaining deps, skipping torch/torchaudio so pip doesn't re-download
+# 3. Install openai-whisper with --no-build-isolation (uses our pinned setuptools)
+# 4. Install remaining deps, skipping torch/torchaudio so pip doesn't re-download
 #    the full CUDA build from the default index.
 RUN pip install --no-cache-dir pip==24.0 setuptools==69.5.1 wheel && \
     pip install --no-cache-dir \
         torch==2.2.2+cpu \
         torchaudio==2.2.2+cpu \
         --index-url https://download.pytorch.org/whl/cpu && \
-    grep -vE "^torch(audio)?==" requirements.txt > /tmp/requirements-no-torch.txt && \
+    pip install --no-cache-dir --no-build-isolation openai-whisper==20231117 && \
+    grep -vE "^torch(audio)?==|^openai-whisper==" requirements.txt > /tmp/requirements-no-torch.txt && \
     pip install --no-cache-dir -r /tmp/requirements-no-torch.txt
 
 COPY app/ ./app/
