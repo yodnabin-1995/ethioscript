@@ -27,7 +27,9 @@ import (
 	"github.com/ethioscript/account-service/internal/auth"
 	"github.com/ethioscript/account-service/internal/config"
 	"github.com/ethioscript/account-service/internal/handler"
+	"github.com/ethioscript/account-service/internal/mailer"
 	"github.com/ethioscript/account-service/internal/repository"
+	"github.com/ethioscript/account-service/internal/storage"
 	"github.com/ethioscript/account-service/internal/usecase"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
@@ -81,16 +83,33 @@ func main() {
 	log.Info("redis connected")
 
 	// ── Dependencies ──────────────────────────────────────────────────────────
-	jwtMgr := auth.NewManager(
+	jwtMgr  := auth.NewManager(
 		cfg.Auth.JWTSecret,
 		cfg.Auth.JWTExpiryHours,
 		cfg.Auth.RefreshTokenExpiryDays,
 	)
-	repo := repository.NewAccountRepo(db)
-	uc   := usecase.NewAccountUseCase(repo, jwtMgr, cfg, log)
+	repo    := repository.NewAccountRepo(db)
+	mail    := mailer.New(cfg.Email, log)
+	uc      := usecase.NewAccountUseCase(repo, jwtMgr, cfg, log, mail)
+
+	// MinIO for profile photos
+	minioEndpoint := getEnv("MINIO_ENDPOINT", "minio:9000")
+	minioAccessKey := getEnv("MINIO_ACCESS_KEY", "minioadmin")
+	minioSecretKey := getEnv("MINIO_SECRET_KEY", "minioadmin123")
+	minioBucket    := getEnv("MINIO_BUCKET", "ethioscript-assets")
+	minioSSL, _    := parseBool(getEnv("MINIO_USE_SSL", "false"))
+
+	var photoH *handler.PhotoHandler
+	if minioClient, err := storage.New(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioSSL); err != nil {
+		log.Warn("minio client failed — photo upload disabled", zap.Error(err))
+	} else {
+		photoH = handler.NewPhotoHandler(uc, minioClient, minioEndpoint, log)
+	}
+
+	googleH := handler.NewGoogleHandler(uc, cfg.Google, log)
 
 	// ── Router ────────────────────────────────────────────────────────────────
-	router := handler.NewRouter(cfg, db, rdb, jwtMgr, uc, log, openapiFS)
+	router := handler.NewRouter(cfg, db, rdb, jwtMgr, uc, photoH, googleH, log, openapiFS)
 
 	// ── HTTP Server ───────────────────────────────────────────────────────────
 	srv := &http.Server{
@@ -120,4 +139,15 @@ func main() {
 		log.Error("shutdown error", zap.Error(err))
 	}
 	log.Info("account-service stopped")
+}
+
+func getEnv(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func parseBool(s string) (bool, error) {
+	return s == "true" || s == "1", nil
 }

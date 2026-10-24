@@ -1,11 +1,9 @@
 """
-STT Worker — Speech-to-Text pipeline (Release 2).
+STT Worker — Speech-to-Text pipeline (Whisper).
 
 Consumes STT job messages from RabbitMQ, runs Whisper inference,
-uploads transcript to MinIO, and publishes results back.
-
-STATUS: Release 2 stub — message consumption and result publishing
-        are wired; Whisper model loading is conditional on availability.
+uploads transcript to MinIO, and publishes results back to the
+job-orchestrator via the results queue.
 """
 
 import asyncio
@@ -20,8 +18,11 @@ from threading import Thread
 import aio_pika
 from prometheus_client import Counter, Gauge, Histogram, start_http_server
 
+from app.adapters import storage
 from app.config import settings
+from app.pipeline.stt_pipeline import run_stt
 
+# ── Logging ────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -29,10 +30,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger("stt-worker")
 
-# ── Prometheus metrics ────────────────────────────────────────────────────────
-JOBS_RECEIVED = Counter("stt_jobs_received_total",  "Total STT jobs received")
+# ── Prometheus metrics ─────────────────────────────────────────────────────────
+JOBS_RECEIVED  = Counter("stt_jobs_received_total",  "Total STT jobs received")
 JOBS_SUCCEEDED = Counter("stt_jobs_succeeded_total", "Total STT jobs succeeded")
-JOBS_FAILED = Counter("stt_jobs_failed_total",    "Total STT jobs failed", ["error_code"])
+JOBS_FAILED    = Counter("stt_jobs_failed_total",    "Total STT jobs failed", ["error_code"])
 PROCESSING_DURATION = Histogram(
     "stt_processing_duration_seconds",
     "STT job processing duration",
@@ -50,50 +51,89 @@ async def process_message(message: aio_pika.IncomingMessage) -> dict:
 
         try:
             payload = json.loads(message.body)
-            job_id = payload["job_id"]
+            job_id       = payload["job_id"]
+            document_id  = payload["document_id"]
+            tenant_id    = payload["tenant_id"]
+            asset_key    = payload["asset_id"]      # MinIO object key
+            language     = payload.get("language", settings.stt_language)
 
-            logger.info("processing STT job %s", job_id)
+            logger.info("processing STT job %s (document: %s)", job_id, document_id)
 
-            # TODO (Release 2): implement full STT pipeline
             # 1. Download audio from MinIO
-            # 2. Validate and normalise audio format (pydub / ffmpeg)
-            # 3. Split into chunks of settings.stt_chunk_seconds
-            # 4. Run whisper.transcribe() on each chunk
-            # 5. Merge segments with timestamps
-            # 6. Upload transcript JSON to MinIO
-            # 7. Return result message
+            audio_bytes = storage.download_object(asset_key)
+            media_type = payload.get("media_type", "audio/mpeg")
 
-            raise NotImplementedError("STT pipeline not yet implemented (Release 2)")
+            # 2. Run Whisper transcription pipeline
+            result = run_stt(
+                audio_bytes=audio_bytes,
+                media_type=media_type,
+                language=language,
+                model_name=settings.stt_model,
+                chunk_seconds=settings.stt_chunk_seconds,
+            )
 
-        except NotImplementedError as exc:
-            error_code = "NOT_IMPLEMENTED"
-            JOBS_FAILED.labels(error_code=error_code).inc()
-            logger.warning("STT job %s: %s", payload.get("job_id", "?"), exc)
-            return {
-                "job_id":       payload.get("job_id", "unknown"),
-                "document_id":  payload.get("document_id", "unknown"),
-                "tenant_id":    payload.get("tenant_id", "unknown"),
-                "success":      False,
-                "error_code":   error_code,
-                "error_message": str(exc),
-                "processed_at": datetime.now(timezone.utc).isoformat(),
+            if not result.success:
+                raise RuntimeError(f"STT pipeline failed: {result.error_message}")
+
+            # 3. Upload transcript JSON to MinIO
+            transcript_key = storage.build_transcript_key(tenant_id, document_id, version=1)
+            transcript_data = {
+                "text": result.full_text,
+                "segments": [
+                    {"start": s.start, "end": s.end, "text": s.text}
+                    for s in result.segments
+                ],
+                "language": result.language,
+                "model": result.model_name,
+                "duration_seconds": result.duration_seconds,
             }
+            storage.upload_transcript(transcript_key, transcript_data)
+
+            # 4. Build result message
+            result_msg = {
+                "job_id":            job_id,
+                "document_id":       document_id,
+                "tenant_id":         tenant_id,
+                "success":           True,
+                "raw_text_key":       transcript_key,
+                "model_name":         result.model_name,
+                "model_version":      result.model_version,
+                "language":           result.language,
+                "confidence_score":   0.0,    # Whisper doesn't provide confidence
+                "page_count":         0,
+                "word_count":         result.word_count,
+                "char_count":         len(result.full_text),
+                "processed_at":       datetime.now(timezone.utc).isoformat(),
+            }
+
+            duration = time.monotonic() - start
+            PROCESSING_DURATION.observe(duration)
+            JOBS_SUCCEEDED.inc()
+            logger.info(
+                "STT job %s completed: %d words, %.1f s audio in %.2f s",
+                job_id, result.word_count, result.duration_seconds, duration,
+            )
+            return result_msg
+
         except Exception as exc:
+            duration = time.monotonic() - start
+            PROCESSING_DURATION.observe(duration)
             error_code = type(exc).__name__.upper()
             JOBS_FAILED.labels(error_code=error_code).inc()
-            logger.exception("STT job failed")
+            logger.exception("STT job failed: %s", exc)
+
+            payload_data = json.loads(message.body) if message.body else {}
             return {
-                "job_id":       payload.get("job_id", "unknown"),
-                "document_id":  payload.get("document_id", "unknown"),
-                "tenant_id":    payload.get("tenant_id", "unknown"),
-                "success":      False,
-                "error_code":   error_code,
-                "error_message": str(exc),
-                "processed_at": datetime.now(timezone.utc).isoformat(),
+                "job_id":         payload_data.get("job_id", "unknown"),
+                "document_id":    payload_data.get("document_id", "unknown"),
+                "tenant_id":      payload_data.get("tenant_id", "unknown"),
+                "success":         False,
+                "error_code":      error_code,
+                "error_message":   str(exc),
+                "processed_at":   datetime.now(timezone.utc).isoformat(),
             }
         finally:
             ACTIVE_JOBS.dec()
-            PROCESSING_DURATION.observe(time.monotonic() - start)
 
 
 async def main() -> None:
@@ -103,9 +143,11 @@ async def main() -> None:
         settings.stt_language,
     )
 
+    # Start Prometheus metrics server in background thread
     Thread(target=start_http_server, args=(settings.metrics_port,), daemon=True).start()
     logger.info("metrics server on port %d", settings.metrics_port)
 
+    # Connect to RabbitMQ with retry
     for attempt in range(10):
         try:
             connection = await aio_pika.connect_robust(settings.rabbitmq_url)
@@ -142,7 +184,7 @@ async def main() -> None:
             )
 
     await stt_queue.consume(on_message)
-    logger.info("STT worker ready (Release 2 stub)")
+    logger.info("STT worker ready")
 
     try:
         await asyncio.Future()

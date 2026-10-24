@@ -205,7 +205,31 @@ func (uc *JobUseCase) HandleWorkerResult(ctx context.Context, result domain.JobR
 	}
 
 	txErr = tx.Commit(ctx)
-	return txErr
+	if txErr != nil {
+		return txErr
+	}
+
+	// Write audit event and usage record after successful commit
+	go func() {
+		bgCtx := context.Background()
+		action := "JOB_COMPLETED"
+		if !result.Success {
+			action = "JOB_FAILED"
+		}
+		uc.WriteAuditEvent(bgCtx, tenantID, action, "ProcessingJob", jobID.String(), result.ErrorMessage)
+		if result.Success {
+			unitType := "PAGE"
+			quantity := float64(result.PageCount)
+			if result.PageCount == 0 {
+				// STT jobs — use word count as proxy unit
+				unitType = "INFERENCE_UNIT"
+				quantity = 1
+			}
+			uc.WriteUsageRecord(bgCtx, tenantID, jobID, docID, unitType, quantity)
+		}
+	}()
+
+	return nil
 }
 
 // RunOutboxPublisher polls the outbox table and publishes unpublished events to the broker.
@@ -251,8 +275,8 @@ func (uc *JobUseCase) publishPendingOutboxEvents(ctx context.Context) {
 			continue
 		}
 
-		// Determine routing key from event type
-		routingKey := eventTypeToRoutingKey(eventType)
+		// Determine routing key from event type + payload task_type
+		routingKey := eventTypeToRoutingKey(eventType, payload)
 		err := uc.amqpCh.Publish(
 			uc.cfg.Exchange,
 			routingKey,
@@ -308,6 +332,38 @@ func (uc *JobUseCase) RunLeaseReaper(ctx context.Context) {
 	}
 }
 
+// WriteAuditEvent writes an audit event to the audit_events table.
+func (uc *JobUseCase) WriteAuditEvent(ctx context.Context, tenantID uuid.UUID, action, resourceType, resourceID, errorMsg string) {
+	payload, _ := json.Marshal(map[string]string{
+		"resource_type": resourceType,
+		"resource_id":   resourceID,
+		"error":         errorMsg,
+	})
+	_, err := uc.db.Exec(ctx,
+		`INSERT INTO audit_events (id, tenant_id, action, resource_type, resource_id, metadata, occurred_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+		uuid.New(), tenantID, action, resourceType, resourceID, payload,
+	)
+	if err != nil {
+		uc.log.Warn("failed to write audit event", zap.Error(err), zap.String("action", action))
+	}
+}
+
+// WriteUsageRecord writes a usage record for billing/metering.
+func (uc *JobUseCase) WriteUsageRecord(ctx context.Context, tenantID, jobID, docID uuid.UUID, unitType string, quantity float64) {
+	now := time.Now().UTC()
+	periodMonth := now.Format("2006-01")
+	_, err := uc.db.Exec(ctx,
+		`INSERT INTO usage_records (id, tenant_id, job_id, document_id, unit_type, quantity, period_month, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		 ON CONFLICT DO NOTHING`,
+		uuid.New(), tenantID, jobID, docID, unitType, quantity, periodMonth, now,
+	)
+	if err != nil {
+		uc.log.Warn("failed to write usage record", zap.Error(err))
+	}
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 func (uc *JobUseCase) publishDeadLetter(result domain.JobResult) {
@@ -324,9 +380,16 @@ func (uc *JobUseCase) publishDeadLetter(result domain.JobResult) {
 	)
 }
 
-func eventTypeToRoutingKey(eventType string) string {
+func eventTypeToRoutingKey(eventType string, payload []byte) string {
 	switch eventType {
 	case "document.processing.requested":
+		// Inspect task_type in the payload to route OCR vs STT correctly
+		var p struct {
+			TaskType string `json:"task_type"`
+		}
+		if err := json.Unmarshal(payload, &p); err == nil && p.TaskType == "STT" {
+			return "jobs.stt"
+		}
 		return "jobs.ocr"
 	default:
 		return eventType

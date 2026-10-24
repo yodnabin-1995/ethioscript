@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/ethioscript/account-service/internal/auth"
@@ -15,14 +16,21 @@ import (
 
 // AccountUseCase contains all account business logic.
 type AccountUseCase struct {
-	repo   *repository.AccountRepo
-	jwt    *auth.Manager
-	cfg    *config.Config
-	log    *zap.Logger
+	repo    *repository.AccountRepo
+	jwt     *auth.Manager
+	cfg     *config.Config
+	log     *zap.Logger
+	mailer  Mailer
 }
 
-func NewAccountUseCase(repo *repository.AccountRepo, jwt *auth.Manager, cfg *config.Config, log *zap.Logger) *AccountUseCase {
-	return &AccountUseCase{repo: repo, jwt: jwt, cfg: cfg, log: log}
+// Mailer is the interface the usecase needs for sending email.
+type Mailer interface {
+	SendPasswordReset(toEmail, rawToken, appBaseURL string) error
+	SendEmailVerification(toEmail, rawToken, appBaseURL string) error
+}
+
+func NewAccountUseCase(repo *repository.AccountRepo, jwt *auth.Manager, cfg *config.Config, log *zap.Logger, m Mailer) *AccountUseCase {
+	return &AccountUseCase{repo: repo, jwt: jwt, cfg: cfg, log: log, mailer: m}
 }
 
 // ─── Registration ─────────────────────────────────────────────────────────────
@@ -196,11 +204,16 @@ func (uc *AccountUseCase) ForgotPassword(ctx context.Context, req domain.ForgotP
 		return err
 	}
 
-	// In production: send email with raw token link
-	uc.log.Info("password reset token generated (send via email)",
-		zap.String("user_id", user.ID.String()),
-		zap.String("token_preview", raw[:8]+"…"),
-	)
+	// Send password reset email (non-blocking — failure doesn't break the flow)
+	go func() {
+		appURL := "http://localhost:3000"
+		if err := uc.mailer.SendPasswordReset(user.Email, raw, appURL); err != nil {
+			uc.log.Error("failed to send password reset email",
+				zap.String("user_id", user.ID.String()),
+				zap.Error(err),
+			)
+		}
+	}()
 	return nil
 }
 
@@ -227,6 +240,12 @@ func (uc *AccountUseCase) ResetPassword(ctx context.Context, req domain.ResetPas
 // ─── Email Verification ───────────────────────────────────────────────────────
 
 func (uc *AccountUseCase) SendVerificationEmail(ctx context.Context, userID uuid.UUID) error {
+	// Look up user to get their email address
+	userRecord, err := uc.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return domain.ErrNotFound
+	}
+
 	raw, hash, err := auth.GenerateOpaqueToken()
 	if err != nil {
 		return err
@@ -242,10 +261,16 @@ func (uc *AccountUseCase) SendVerificationEmail(ctx context.Context, userID uuid
 	if err := uc.repo.CreateEmailVerification(ctx, ev); err != nil {
 		return err
 	}
-	uc.log.Info("email verification token generated (send via email)",
-		zap.String("user_id", userID.String()),
-		zap.String("token_preview", raw[:8]+"…"),
-	)
+	// Send verification email (non-blocking)
+	go func() {
+		appURL := "http://localhost:3000"
+		if err := uc.mailer.SendEmailVerification(userRecord.Email, raw, appURL); err != nil {
+			uc.log.Error("failed to send verification email",
+				zap.String("user_id", userID.String()),
+				zap.Error(err),
+			)
+		}
+	}()
 	return nil
 }
 
@@ -427,4 +452,93 @@ func (uc *AccountUseCase) issueTokenPair(ctx context.Context, user domain.User) 
 		TokenType:    "Bearer",
 		User:         user,
 	}, nil
+}
+
+// ─── Google OAuth ─────────────────────────────────────────────────────────────
+
+// LoginWithGoogle upserts a user from Google OAuth user info and returns a token pair.
+func (uc *AccountUseCase) LoginWithGoogle(ctx context.Context, info domain.GoogleUserInfo, defaultTenantSlug string) (*domain.TokenResponse, error) {
+	// Resolve tenant
+	tenant, err := uc.repo.GetTenantBySlug(ctx, defaultTenantSlug)
+	if err != nil {
+		return nil, fmt.Errorf("%w: tenant not found", domain.ErrNotFound)
+	}
+
+	now := time.Now().UTC()
+	googleID := info.GoogleID
+	user := &domain.User{
+		ID:              uuid.New(),
+		TenantID:        tenant.ID,
+		Email:           info.Email,
+		Name:            info.Name,
+		Role:            domain.RoleContributor,
+		Status:          domain.StatusActive,
+		GoogleID:        &googleID,
+		EmailVerified:   info.VerifiedEmail,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+	}
+	if info.PictureURL != "" {
+		user.ProfilePhotoKey = &info.PictureURL // store Google's CDN URL as initial photo key
+	}
+
+	_, err = uc.repo.UpsertGoogleUser(ctx, user)
+	if err != nil {
+		return nil, fmt.Errorf("google upsert: %w", err)
+	}
+
+	_ = uc.repo.RecordLoginSuccess(ctx, user.ID)
+	return uc.issueTokenPair(ctx, *user)
+}
+
+// ─── Profile Photo ────────────────────────────────────────────────────────────
+
+// StorageUploader is the interface the usecase needs for photo uploads.
+type StorageUploader interface {
+	PutObject(ctx context.Context, objectKey, contentType string, data io.Reader, size int64) error
+	PublicURL(endpoint, objectKey string) string
+}
+
+// UploadProfilePhoto stores a profile photo in MinIO and updates the user record.
+func (uc *AccountUseCase) UploadProfilePhoto(
+	ctx context.Context,
+	userID uuid.UUID,
+	data io.Reader,
+	size int64,
+	contentType string,
+	uploader StorageUploader,
+	minioEndpoint string,
+) (photoURL string, err error) {
+	user, err := uc.repo.GetUserByID(ctx, userID)
+	if err != nil {
+		return "", domain.ErrNotFound
+	}
+
+	ext := extensionFromContentType(contentType)
+	objectKey := fmt.Sprintf("%s/profiles/%s/photo%s", user.TenantID.String(), userID.String(), ext)
+
+	if err := uploader.PutObject(ctx, objectKey, contentType, data, size); err != nil {
+		return "", fmt.Errorf("upload failed: %w", err)
+	}
+
+	if err := uc.repo.UpdateProfilePhotoKey(ctx, userID, objectKey); err != nil {
+		return "", fmt.Errorf("db update failed: %w", err)
+	}
+
+	return uploader.PublicURL(minioEndpoint, objectKey), nil
+}
+
+func extensionFromContentType(ct string) string {
+	switch ct {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	default:
+		return ".jpg"
+	}
 }

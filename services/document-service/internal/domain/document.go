@@ -165,3 +165,65 @@ type DocumentListResponse struct {
 	PageSize   int        `json:"page_size"`
 	TotalPages int        `json:"total_pages"`
 }
+
+// ─── Asset DTOs ───────────────────────────────────────────────────────────────
+
+// InitUploadRequest is the body for POST /assets.
+type InitUploadRequest struct {
+	Filename        string `json:"filename"`
+	MediaType       string `json:"media_type"`
+	SizeBytes       int64  `json:"size_bytes"`
+	ChecksumSHA256  string `json:"checksum_sha256"`
+}
+
+// InitUploadResponse is returned by POST /assets.
+type InitUploadResponse struct {
+	AssetID      string `json:"asset_id"`
+	UploadURL    string `json:"upload_url"`
+	UploadMethod string `json:"upload_method"`
+	ExpiresAt    string `json:"expires_at"`
+}
+
+// Asset is a registered file stored in MinIO.
+type Asset struct {
+	ID               uuid.UUID  `json:"id"`
+	TenantID         uuid.UUID  `json:"tenant_id"`
+	ObjectKey        string     `json:"object_key"`
+	OriginalFilename string     `json:"original_filename"`
+	ChecksumSHA256   string     `json:"checksum_sha256"`
+	MediaType        string     `json:"media_type"`
+	SizeBytes        int64      `json:"size_bytes"`
+	Bucket           string     `json:"bucket"`
+	CreatedBy        uuid.UUID  `json:"created_by"`
+	CreatedAt        time.Time  `json:"created_at"`
+}
+
+// ─── Export DTOs ──────────────────────────────────────────────────────────────
+
+type ExportFormat string
+
+const (
+	ExportTXT  ExportFormat = "TXT"
+	ExportJSON ExportFormat = "JSON"
+	ExportDOCX ExportFormat = "DOCX"
+)
+
+type ExportRequest struct {
+	Format ExportFormat `json:"format"`
+}
+
+type ExportResponse struct {
+	ExportID  string `json:"export_id"`
+	Format    string `json:"format"`
+	ObjectKey string `json:"object_key"`
+	Status    string `json:"status"`
+	CreatedAt string `json:"created_at"`
+}
+
+// ─── Errors ───────────────────────────────────────────────────────────────────
+
+var (
+	ErrAssetNotFound    = errors.New("asset not found")
+	ErrNoResultFound    = errors.New("no result found for document")
+	ErrExportFailed     = errors.New("export generation failed")
+)

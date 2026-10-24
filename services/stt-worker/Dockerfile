@@ -1,17 +1,29 @@
-# ── STT Worker — Python + Whisper (Release 2) ─────────────────────────────────
-FROM python:3.12-slim AS production
+# ── STT Worker — Python + Whisper ────────────────────────────────────────────
+FROM python:3.11-slim AS production
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Force apt to use HTTPS (port 443) — port 80 is blocked on this network
+RUN echo 'Acquire::http::Pipeline-Depth "0";' > /etc/apt/apt.conf.d/99https && \
+    sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.list.d/debian.sources && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends ffmpeg curl && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
 COPY requirements.txt .
-# Pre-install setuptools to avoid pkg_resources missing error with openai-whisper
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+
+# Install in three steps:
+# 1. Pin setuptools to a version that still ships pkg_resources (openai-whisper needs it)
+# 2. Install torch/torchaudio CPU-only wheels (~250 MB vs ~2 GB for CUDA)
+# 3. Install remaining deps, skipping torch/torchaudio so pip doesn't re-download
+#    the full CUDA build from the default index.
+RUN pip install --no-cache-dir pip==24.0 setuptools==69.5.1 wheel && \
+    pip install --no-cache-dir \
+        torch==2.2.2+cpu \
+        torchaudio==2.2.2+cpu \
+        --index-url https://download.pytorch.org/whl/cpu && \
+    grep -vE "^torch(audio)?==" requirements.txt > /tmp/requirements-no-torch.txt && \
+    pip install --no-cache-dir -r /tmp/requirements-no-torch.txt
 
 COPY app/ ./app/
 

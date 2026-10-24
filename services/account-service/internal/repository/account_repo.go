@@ -111,10 +111,12 @@ func (r *AccountRepo) GetUserByID(ctx context.Context, userID uuid.UUID) (*domai
 	var u domain.User
 	err := r.db.QueryRow(ctx,
 		`SELECT id, tenant_id, email, name, role, status, email_verified,
+		        profile_photo_key, google_id,
 		        failed_login_attempts, locked_until, last_login_at, created_at, updated_at
 		 FROM users WHERE id = $1 AND status != 'DELETED'`, userID,
 	).Scan(&u.ID, &u.TenantID, &u.Email, &u.Name, &u.Role, &u.Status,
-		&u.EmailVerified, &u.FailedLoginAttempts, &u.LockedUntil, &u.LastLoginAt,
+		&u.EmailVerified, &u.ProfilePhotoKey, &u.GoogleID,
+		&u.FailedLoginAttempts, &u.LockedUntil, &u.LastLoginAt,
 		&u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, domain.ErrNotFound
@@ -373,4 +375,78 @@ func isDuplicate(err error) bool {
 	}
 	return strings.Contains(err.Error(), "duplicate key") ||
 		strings.Contains(err.Error(), "unique constraint")
+}
+
+// ─── Google OAuth ─────────────────────────────────────────────────────────────
+
+// GetUserByGoogleID finds a user by their Google OAuth subject ID.
+func (r *AccountRepo) GetUserByGoogleID(ctx context.Context, googleID string) (*domain.User, error) {
+	var u domain.User
+	err := r.db.QueryRow(ctx,
+		`SELECT id, tenant_id, email, name, role, status, email_verified,
+		        profile_photo_key, google_id,
+		        failed_login_attempts, locked_until, last_login_at, created_at, updated_at
+		 FROM users WHERE google_id = $1 AND status != 'DELETED'`, googleID,
+	).Scan(&u.ID, &u.TenantID, &u.Email, &u.Name, &u.Role, &u.Status,
+		&u.EmailVerified, &u.ProfilePhotoKey, &u.GoogleID,
+		&u.FailedLoginAttempts, &u.LockedUntil, &u.LastLoginAt,
+		&u.CreatedAt, &u.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, domain.ErrNotFound
+	}
+	return &u, err
+}
+
+// UpsertGoogleUser creates or updates a user that signed in with Google.
+// Returns the user and whether they were newly created.
+func (r *AccountRepo) UpsertGoogleUser(ctx context.Context, u *domain.User) (bool, error) {
+	var existing domain.User
+	err := r.db.QueryRow(ctx,
+		`SELECT id FROM users WHERE email = $1 AND status != 'DELETED'`, u.Email,
+	).Scan(&existing.ID)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		// New user — create account
+		_, err = r.db.Exec(ctx,
+			`INSERT INTO users (id, tenant_id, email, password_hash, name, role, status,
+			                    email_verified, google_id, profile_photo_key, created_at, updated_at)
+			 VALUES ($1, $2, $3, NULL, $4, $5, $6, TRUE, $7, $8, $9, $10)`,
+			u.ID, u.TenantID, u.Email, u.Name, u.Role, u.Status,
+			u.GoogleID, u.ProfilePhotoKey, u.CreatedAt, u.UpdatedAt,
+		)
+		return true, err
+	}
+	if err != nil {
+		return false, err
+	}
+
+	// Existing user — link Google ID and update profile photo if not set
+	_, err = r.db.Exec(ctx,
+		`UPDATE users
+		 SET google_id = $1,
+		     email_verified = TRUE,
+		     profile_photo_key = COALESCE(profile_photo_key, $2),
+		     updated_at = NOW()
+		 WHERE email = $3`,
+		u.GoogleID, u.ProfilePhotoKey, u.Email,
+	)
+	// Return the existing user by email
+	if err == nil {
+		existing2, err2 := r.GetUserByGoogleID(ctx, *u.GoogleID)
+		if err2 == nil {
+			*u = *existing2
+		}
+	}
+	return false, err
+}
+
+// ─── Profile Photo ────────────────────────────────────────────────────────────
+
+// UpdateProfilePhotoKey stores the MinIO object key for the user's profile photo.
+func (r *AccountRepo) UpdateProfilePhotoKey(ctx context.Context, userID uuid.UUID, objectKey string) error {
+	_, err := r.db.Exec(ctx,
+		`UPDATE users SET profile_photo_key = $1, updated_at = NOW() WHERE id = $2`,
+		objectKey, userID,
+	)
+	return err
 }

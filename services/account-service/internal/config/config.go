@@ -17,6 +17,15 @@ type Config struct {
 	Rate     RateLimitConfig
 	Swagger  SwaggerConfig
 	Security SecurityConfig
+	Email    EmailConfig
+	Google   GoogleOAuthConfig
+}
+
+type GoogleOAuthConfig struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
+	Enabled      bool
 }
 
 type ServerConfig struct {
@@ -62,6 +71,15 @@ type SecurityConfig struct {
 	InternalAPIKey   string
 }
 
+type EmailConfig struct {
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUser     string
+	SMTPPassword string
+	FromAddress  string
+	Enabled      bool
+}
+
 func Load() (*Config, error) {
 	cfg := &Config{}
 
@@ -100,6 +118,18 @@ func Load() (*Config, error) {
 	cfg.Security.LockoutMinutes, _ = strconv.Atoi(getEnv("LOCKOUT_MINUTES", "15"))
 	cfg.Security.BcryptCost, _ = strconv.Atoi(getEnv("BCRYPT_COST", "12"))
 	cfg.Security.InternalAPIKey = mustGetEnv("INTERNAL_API_KEY")
+
+	cfg.Email.SMTPHost = getEnv("SMTP_HOST", "")
+	cfg.Email.SMTPPort, _ = strconv.Atoi(getEnv("SMTP_PORT", "587"))
+	cfg.Email.SMTPUser = getEnv("SMTP_USER", "")
+	cfg.Email.SMTPPassword = getEnv("SMTP_PASSWORD", "")
+	cfg.Email.FromAddress = getEnv("SMTP_FROM", "noreply@ethioscript.io")
+	cfg.Email.Enabled = cfg.Email.SMTPHost != ""
+
+	cfg.Google.ClientID = getEnv("GOOGLE_CLIENT_ID", "")
+	cfg.Google.ClientSecret = getEnv("GOOGLE_CLIENT_SECRET", "")
+	cfg.Google.RedirectURL = getEnv("GOOGLE_REDIRECT_URL", "http://localhost:8000/auth/google/callback")
+	cfg.Google.Enabled = cfg.Google.ClientID != ""
 
 	return cfg, nil
 }

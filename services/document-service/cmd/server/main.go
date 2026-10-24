@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
+	"github.com/ethioscript/document-service/internal/adapter/storage"
 	"github.com/ethioscript/document-service/internal/handler"
+	"github.com/ethioscript/document-service/internal/middleware"
 	"github.com/ethioscript/document-service/internal/usecase"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -29,10 +32,19 @@ func main() {
 	log, _ := zap.NewProduction()
 	defer log.Sync()
 
-	port := getEnv("PORT", "6001")
-	dsn := mustGetEnv("POSTGRES_DSN")
-	rabbitURL := mustGetEnv("RABBITMQ_URL")
-	exchange := getEnv("RABBITMQ_EXCHANGE", "ethioscript.events")
+	port        := getEnv("PORT", "6001")
+	dsn         := mustGetEnv("POSTGRES_DSN")
+	rabbitURL   := mustGetEnv("RABBITMQ_URL")
+	exchange    := getEnv("RABBITMQ_EXCHANGE", "ethioscript.events")
+	internalKey := getEnv("INTERNAL_API_KEY", "")
+
+	// MinIO config
+	minioEndpoint  := getEnv("MINIO_ENDPOINT", "minio:9000")
+	minioAccessKey := getEnv("MINIO_ACCESS_KEY", "minioadmin")
+	minioSecretKey := getEnv("MINIO_SECRET_KEY", "minioadmin123")
+	minioBucket    := getEnv("MINIO_BUCKET", "ethioscript-assets")
+	minioSSL, _    := strconv.ParseBool(getEnv("MINIO_USE_SSL", "false"))
+	maxUploadMB, _ := strconv.ParseInt(getEnv("MAX_UPLOAD_SIZE_MB", "50"), 10, 64)
 
 	// ── PostgreSQL ──────────────────────────────────────────────────────────
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -57,52 +69,77 @@ func main() {
 	}
 	defer ch.Close()
 
-	// Declare topic exchange
 	if err := ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil); err != nil {
 		log.Fatal("exchange declare failed", zap.Error(err))
 	}
 	log.Info("rabbitmq connected", zap.String("exchange", exchange))
 
-	// ── Use case & Handler ────────────────────────────────────────────────────
-	uc := usecase.NewDocumentUseCase(db, ch, exchange, log)
-	docH := handler.NewDocumentHandler(uc, log)
+	// ── MinIO ─────────────────────────────────────────────────────────────────
+	minioClient, err := storage.New(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioSSL)
+	if err != nil {
+		log.Fatal("minio client failed", zap.Error(err))
+	}
+	log.Info("minio connected", zap.String("bucket", minioBucket))
+
+	// ── Use case & Handlers ───────────────────────────────────────────────────
+	uc     := usecase.NewDocumentUseCase(db, ch, exchange, log)
+	docH   := handler.NewDocumentHandler(uc, minioClient, log)
+	assetH := handler.NewAssetHandler(uc, minioClient, minioBucket, log)
+
+	_ = maxUploadMB // used for future validation middleware
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RealIP)
-	// StripSlashes removed — breaks /docs/ Swagger navigation
 
+	// Public system endpoints (no auth)
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
 	})
 	r.Get("/health", docH.Health)
 	r.Handle("/metrics", promhttp.Handler())
 
-	// ── Swagger UI (embedded spec) ────────────────────────────────────────────
+	// Swagger UI
 	r.Get("/docs/openapi.yml", func(w http.ResponseWriter, r *http.Request) {
 		data, _ := openapiSpec.ReadFile("docs/openapi.yml")
 		w.Header().Set("Content-Type", "application/yaml")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		_, _ = w.Write(data)
 	})
-	swaggerHandlerDoc := httpSwagger.Handler(
+	swaggerHandler := httpSwagger.Handler(
 		httpSwagger.URL("/docs/openapi.yml"),
 		httpSwagger.DeepLinking(true),
 		httpSwagger.DocExpansion("list"),
 	)
-	r.Get("/docs", swaggerHandlerDoc)
-	r.Get("/docs/", swaggerHandlerDoc)
-	r.Get("/docs/*", swaggerHandlerDoc)
+	r.Get("/docs", swaggerHandler)
+	r.Get("/docs/", swaggerHandler)
+	r.Get("/docs/*", swaggerHandler)
 
-	// Clean routes — no /api/v1 prefix
-	r.Post("/documents", docH.CreateDocument)
-	r.Get("/documents", docH.ListDocuments)
-	r.Get("/documents/{id}", docH.GetDocument)
-	r.Delete("/documents/{id}", docH.DeleteDocument)
-	r.Put("/documents/{id}/result/draft", docH.SaveDraft)
-	r.Post("/documents/{id}/approve", docH.ApproveDocument)
+	// ── Internal API — protected by X-Internal-Key ────────────────────────────
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.InternalOnly(internalKey))
+
+		// Asset upload
+		r.Post("/assets", assetH.InitUpload)
+
+		// Document CRUD
+		r.Post("/documents", docH.CreateDocument)
+		r.Get("/documents", docH.ListDocumentsFiltered)
+		r.Get("/documents/{id}", docH.GetDocument)
+		r.Delete("/documents/{id}", docH.DeleteDocument)
+
+		// Result lifecycle
+		r.Get("/documents/{id}/result", docH.GetResult)
+		r.Put("/documents/{id}/result/draft", docH.SaveDraft)
+		r.Post("/documents/{id}/approve", docH.ApproveDocument)
+		r.Post("/documents/{id}/retry", docH.RetryDocument)
+		r.Post("/documents/{id}/exports", docH.ExportDocument)
+	})
 
 	// ── Server ────────────────────────────────────────────────────────────────
+	srvCtx, srvCancel := context.WithCancel(context.Background())
+	defer srvCancel()
+
 	srv := &http.Server{
 		Addr:         fmt.Sprintf(":%s", port),
 		Handler:      r,
@@ -120,10 +157,12 @@ func main() {
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
+	srvCancel()
 
 	shutCtx, shutCancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer shutCancel()
 	_ = srv.Shutdown(shutCtx)
+	_ = srvCtx
 	log.Info("document-service stopped")
 }
 

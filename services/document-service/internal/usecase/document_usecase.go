@@ -315,3 +315,317 @@ func (uc *DocumentUseCase) SoftDeleteDocument(ctx context.Context, tenantID, doc
 	}
 	return nil
 }
+
+// ─── Asset Upload (POST /assets) ──────────────────────────────────────────────
+
+// InitUpload creates an asset record and returns a pre-signed MinIO PUT URL.
+func (uc *DocumentUseCase) InitUpload(
+	ctx context.Context,
+	tenantID, userID uuid.UUID,
+	req domain.InitUploadRequest,
+	storage StorageClient,
+	bucket string,
+) (*domain.InitUploadResponse, error) {
+	if req.Filename == "" || req.MediaType == "" || req.SizeBytes <= 0 {
+		return nil, fmt.Errorf("filename, media_type, and size_bytes are required")
+	}
+
+	assetID := uuid.New()
+	objectKey := fmt.Sprintf("%s/assets/%s/%s", tenantID.String(), assetID.String(), req.Filename)
+	now := time.Now().UTC()
+	ttl := 15 * time.Minute
+
+	// Insert asset row before generating presign so key is tracked
+	_, err := uc.db.Exec(ctx,
+		`INSERT INTO assets (id, tenant_id, object_key, original_filename, checksum_sha256,
+		                     media_type, size_bytes, bucket, scan_status, created_by, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'PENDING', $9, $10)`,
+		assetID, tenantID, objectKey,
+		req.Filename, req.ChecksumSHA256,
+		req.MediaType, req.SizeBytes, bucket,
+		userID, now,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("insert asset: %w", err)
+	}
+
+	uploadURL, err := storage.PresignPutURL(ctx, objectKey, ttl)
+	if err != nil {
+		return nil, fmt.Errorf("presign: %w", err)
+	}
+
+	uc.log.Info("asset upload initialised",
+		zap.String("asset_id", assetID.String()),
+		zap.String("object_key", objectKey),
+	)
+
+	return &domain.InitUploadResponse{
+		AssetID:      assetID.String(),
+		UploadURL:    uploadURL,
+		UploadMethod: "PUT",
+		ExpiresAt:    now.Add(ttl).UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// StorageClient is the interface document-service needs from MinIO.
+type StorageClient interface {
+	PresignPutURL(ctx context.Context, objectKey string, ttl time.Duration) (string, error)
+	GetObjectBytes(ctx context.Context, objectKey string) ([]byte, error)
+}
+
+// ─── Get Result (GET /documents/{id}/result) ──────────────────────────────────
+
+// GetResult returns the latest ResultVersion for a document.
+func (uc *DocumentUseCase) GetResult(ctx context.Context, tenantID, docID uuid.UUID) (*domain.ResultVersion, error) {
+	// Ensure document exists and belongs to tenant
+	if _, err := uc.GetDocument(ctx, tenantID, docID); err != nil {
+		return nil, err
+	}
+
+	var rv domain.ResultVersion
+	err := uc.db.QueryRow(ctx,
+		`SELECT id, document_id, tenant_id, job_id, version, is_approved,
+		        raw_text_key, approved_text, confidence_score, model_metadata,
+		        word_count, char_count, created_by, approved_by, approved_at, created_at
+		 FROM result_versions
+		 WHERE document_id = $1 AND tenant_id = $2
+		 ORDER BY version DESC
+		 LIMIT 1`,
+		docID, tenantID,
+	).Scan(
+		&rv.ID, &rv.DocumentID, &rv.TenantID, &rv.JobID, &rv.Version, &rv.IsApproved,
+		&rv.RawTextKey, &rv.ApprovedText, &rv.ConfidenceScore, &rv.ModelMetadata,
+		&rv.WordCount, &rv.CharCount,
+		&rv.CreatedBy, &rv.ApprovedBy, &rv.ApprovedAt, &rv.CreatedAt,
+	)
+	if err != nil {
+		return nil, domain.ErrNoResultFound
+	}
+	return &rv, nil
+}
+
+// ─── Retry Document (POST /documents/{id}/retry) ─────────────────────────────
+
+// RetryDocument requeues a FAILED document for processing.
+func (uc *DocumentUseCase) RetryDocument(ctx context.Context, tenantID, docID, userID uuid.UUID) error {
+	doc, err := uc.GetDocument(ctx, tenantID, docID)
+	if err != nil {
+		return err
+	}
+	if doc.Status != domain.StatusFailed {
+		return domain.ErrInvalidTransition
+	}
+
+	jobID := uuid.New()
+	outboxID := uuid.New()
+	now := time.Now().UTC()
+
+	// Fetch asset object key for the outbox payload
+	var objectKey string
+	_ = uc.db.QueryRow(ctx,
+		`SELECT object_key FROM assets WHERE id = $1`, doc.AssetID,
+	).Scan(&objectKey)
+
+	eventPayload, _ := json.Marshal(map[string]any{
+		"document_id": docID.String(),
+		"job_id":      jobID.String(),
+		"asset_id":    objectKey,
+		"tenant_id":   tenantID.String(),
+		"task_type":   string(doc.TaskType),
+		"language":    doc.Language,
+	})
+
+	tx, err := uc.db.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin tx: %w", err)
+	}
+	defer func() {
+		if err != nil {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	// Reset document status
+	_, err = tx.Exec(ctx,
+		`UPDATE documents SET status = 'QUEUED', updated_at = $1 WHERE id = $2`,
+		now, docID,
+	)
+	if err != nil {
+		return fmt.Errorf("reset document status: %w", err)
+	}
+
+	// Insert new processing job
+	_, err = tx.Exec(ctx,
+		`INSERT INTO processing_jobs (id, document_id, tenant_id, task_type, state, language, created_at, updated_at)
+		 VALUES ($1, $2, $3, $4, 'PENDING', $5, $6, $7)`,
+		jobID, docID, tenantID, doc.TaskType, doc.Language, now, now,
+	)
+	if err != nil {
+		return fmt.Errorf("insert retry job: %w", err)
+	}
+
+	// Insert outbox event
+	_, err = tx.Exec(ctx,
+		`INSERT INTO outbox_events (id, aggregate_id, aggregate_type, event_type, tenant_id, payload, occurred_at)
+		 VALUES ($1, $2, 'Document', 'document.processing.requested', $3, $4, $5)`,
+		outboxID, docID, tenantID, eventPayload, now,
+	)
+	if err != nil {
+		return fmt.Errorf("insert outbox event: %w", err)
+	}
+
+	// Audit event
+	_, _ = tx.Exec(ctx,
+		`INSERT INTO audit_events (id, tenant_id, actor_id, action, resource_type, resource_id, occurred_at)
+		 VALUES ($1, $2, $3, 'JOB_RETRIED', 'Document', $4, $5)`,
+		uuid.New(), tenantID, userID, docID, now,
+	)
+
+	return tx.Commit(ctx)
+}
+
+// ─── Export Document (POST /documents/{id}/exports) ──────────────────────────
+
+// ExportDocument generates an export artifact in TXT or JSON format.
+func (uc *DocumentUseCase) ExportDocument(
+	ctx context.Context,
+	tenantID, docID, userID uuid.UUID,
+	req domain.ExportRequest,
+	storage StorageClient,
+) (*domain.ExportResponse, error) {
+	if req.Format == "" {
+		req.Format = domain.ExportTXT
+	}
+
+	rv, err := uc.GetResult(ctx, tenantID, docID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build export content
+	var content []byte
+	switch req.Format {
+	case domain.ExportJSON:
+		content, _ = json.Marshal(rv)
+	default: // TXT
+		text := ""
+		if rv.ApprovedText != nil {
+			text = *rv.ApprovedText
+		} else if rv.RawTextKey != nil {
+			// Download raw text from MinIO
+			raw, dlErr := storage.GetObjectBytes(ctx, *rv.RawTextKey)
+			if dlErr == nil {
+				text = string(raw)
+			}
+		}
+		content = []byte(text)
+	}
+
+	exportID := uuid.New()
+	now := time.Now().UTC()
+	objectKey := fmt.Sprintf("%s/exports/%s/%s.%s",
+		tenantID.String(), docID.String(), exportID.String(),
+		string(req.Format),
+	)
+
+	// Record export artifact in DB
+	_, err = uc.db.Exec(ctx,
+		`INSERT INTO export_artifacts (id, tenant_id, document_id, format, object_key, size_bytes, status, created_by, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, 'COMPLETED', $7, $8)`,
+		exportID, tenantID, docID, string(req.Format), objectKey, len(content), userID, now,
+	)
+	if err != nil {
+		uc.log.Warn("failed to record export artifact", zap.Error(err))
+	}
+
+	uc.log.Info("export generated",
+		zap.String("document_id", docID.String()),
+		zap.String("format", string(req.Format)),
+		zap.Int("bytes", len(content)),
+	)
+
+	return &domain.ExportResponse{
+		ExportID:  exportID.String(),
+		Format:    string(req.Format),
+		ObjectKey: objectKey,
+		Status:    "COMPLETED",
+		CreatedAt: now.UTC().Format(time.RFC3339),
+	}, nil
+}
+
+// ─── ListDocuments with filters ───────────────────────────────────────────────
+
+// ListDocumentsFiltered returns a paginated list with optional status/language/task_type filters.
+func (uc *DocumentUseCase) ListDocumentsFiltered(ctx context.Context, params domain.ListDocumentsParams) (*domain.DocumentListResponse, error) {
+	if params.Page < 1 {
+		params.Page = 1
+	}
+	if params.PageSize < 1 || params.PageSize > 100 {
+		params.PageSize = 20
+	}
+	offset := (params.Page - 1) * params.PageSize
+
+	// Build dynamic WHERE clause
+	args := []any{params.TenantID}
+	where := "tenant_id = $1 AND deleted_at IS NULL"
+	idx := 2
+
+	if params.Status != nil {
+		where += fmt.Sprintf(" AND status = $%d", idx)
+		args = append(args, string(*params.Status))
+		idx++
+	}
+	if params.Language != nil && *params.Language != "" {
+		where += fmt.Sprintf(" AND language = $%d", idx)
+		args = append(args, *params.Language)
+		idx++
+	}
+	if params.TaskType != nil {
+		where += fmt.Sprintf(" AND task_type = $%d", idx)
+		args = append(args, string(*params.TaskType))
+		idx++
+	}
+
+	args = append(args, params.PageSize, offset)
+	query := fmt.Sprintf(
+		`SELECT id, tenant_id, asset_id, filename, language, task_type, status,
+		        title, tags, page_count, created_by, created_at, updated_at
+		 FROM documents
+		 WHERE %s
+		 ORDER BY created_at DESC
+		 LIMIT $%d OFFSET $%d`, where, idx, idx+1,
+	)
+
+	rows, err := uc.db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var docs []domain.Document
+	for rows.Next() {
+		var doc domain.Document
+		if err := rows.Scan(
+			&doc.ID, &doc.TenantID, &doc.AssetID, &doc.Filename, &doc.Language,
+			&doc.TaskType, &doc.Status, &doc.Title, &doc.Tags,
+			&doc.PageCount, &doc.CreatedBy, &doc.CreatedAt, &doc.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		docs = append(docs, doc)
+	}
+
+	countArgs := args[:len(args)-2]
+	var total int
+	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM documents WHERE %s`, where)
+	_ = uc.db.QueryRow(ctx, countQuery, countArgs...).Scan(&total)
+
+	totalPages := (total + params.PageSize - 1) / params.PageSize
+	return &domain.DocumentListResponse{
+		Documents:  docs,
+		Total:      total,
+		Page:       params.Page,
+		PageSize:   params.PageSize,
+		TotalPages: totalPages,
+	}, nil
+}

@@ -39,6 +39,8 @@ func main() {
 	redisAddr := getEnv("REDIS_ADDR", "localhost:6379")
 	redisPass := getEnv("REDIS_PASSWORD", "")
 
+	internalKey := getEnv("INTERNAL_API_KEY", "")
+
 	maxRetry, _ := strconv.Atoi(getEnv("MAX_RETRY_ATTEMPTS", "3"))
 	backoffBase, _ := strconv.Atoi(getEnv("RETRY_BACKOFF_BASE_SECONDS", "30"))
 	outboxPoll, _ := strconv.Atoi(getEnv("OUTBOX_POLL_INTERVAL_SECONDS", "5"))
@@ -142,47 +144,61 @@ func main() {
 	r.Get("/docs/", swaggerHandlerJob)
 	r.Get("/docs/*", swaggerHandlerJob)
 
-	// Clean routes — no /api/v1 prefix
-	r.Get("/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
-		tenantIDStr := r.Header.Get("X-Tenant-ID")
-		tenantID, err := uuid.Parse(tenantIDStr)
-		if err != nil {
-			http.Error(w, `{"error":"invalid tenant"}`, http.StatusUnauthorized)
-			return
-		}
-		jobID, err := uuid.Parse(chi.URLParam(r, "id"))
-		if err != nil {
-			http.Error(w, `{"error":"invalid job id"}`, http.StatusBadRequest)
-			return
-		}
-		job, err := jobUC.GetJob(r.Context(), tenantID, jobID)
-		if errors.Is(err, domain.ErrJobNotFound) {
-			http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
-			return
-		}
-		if err != nil {
-			http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		enc := json.NewEncoder(w)
-		enc.SetIndent("", "  ")
-		_ = enc.Encode(job)
-	})
+	// Clean routes — protected by X-Internal-Key
+	r.Group(func(r chi.Router) {
+		r.Use(func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				if internalKey != "" && req.Header.Get("X-Internal-Key") != internalKey {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusForbidden)
+					_, _ = w.Write([]byte(`{"error":"forbidden","code":"FORBIDDEN"}`))
+					return
+				}
+				next.ServeHTTP(w, req)
+			})
+		})
 
-	r.Post("/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
-		tenantID, _ := uuid.Parse(r.Header.Get("X-Tenant-ID"))
-		jobID, err := uuid.Parse(chi.URLParam(r, "id"))
-		if err != nil {
-			http.Error(w, `{"error":"invalid job id"}`, http.StatusBadRequest)
-			return
-		}
-		if err := jobUC.CancelJob(r.Context(), tenantID, jobID); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusConflict)
-			return
-		}
-		w.WriteHeader(http.StatusNoContent)
-	})
+		r.Get("/jobs/{id}", func(w http.ResponseWriter, r *http.Request) {
+			tenantIDStr := r.Header.Get("X-Tenant-ID")
+			tenantID, err := uuid.Parse(tenantIDStr)
+			if err != nil {
+				http.Error(w, `{"error":"invalid tenant"}`, http.StatusUnauthorized)
+				return
+			}
+			jobID, err := uuid.Parse(chi.URLParam(r, "id"))
+			if err != nil {
+				http.Error(w, `{"error":"invalid job id"}`, http.StatusBadRequest)
+				return
+			}
+			job, err := jobUC.GetJob(r.Context(), tenantID, jobID)
+			if errors.Is(err, domain.ErrJobNotFound) {
+				http.Error(w, `{"error":"not found"}`, http.StatusNotFound)
+				return
+			}
+			if err != nil {
+				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			enc := json.NewEncoder(w)
+			enc.SetIndent("", "  ")
+			_ = enc.Encode(job)
+		})
+
+		r.Post("/jobs/{id}/cancel", func(w http.ResponseWriter, r *http.Request) {
+			tenantID, _ := uuid.Parse(r.Header.Get("X-Tenant-ID"))
+			jobID, err := uuid.Parse(chi.URLParam(r, "id"))
+			if err != nil {
+				http.Error(w, `{"error":"invalid job id"}`, http.StatusBadRequest)
+				return
+			}
+			if err := jobUC.CancelJob(r.Context(), tenantID, jobID); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusConflict)
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		})
+	}) // end internal group
 
 	// ── Server ────────────────────────────────────────────────────────────
 	srv := &http.Server{

@@ -28,6 +28,8 @@ func NewRouter(
 	rdb *redis.Client,
 	jwtMgr *auth.Manager,
 	uc *usecase.AccountUseCase,
+	photoH *PhotoHandler,
+	googleH *GoogleHandler,
 	log *zap.Logger,
 	openapiFS embed.FS,
 ) http.Handler {
@@ -105,11 +107,16 @@ func NewRouter(
 		r.Post("/reset-password",   authH.ResetPassword)
 		r.Post("/verify-email",     authH.VerifyEmail)
 
+		// Google OAuth2 — public (no JWT needed, callback exchanges code for JWT)
+		r.Get("/google",            googleH.Initiate)
+		r.Get("/google/callback",   googleH.Callback)
+
 		// Protected auth sub-routes
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.Authenticate(jwtMgr))
 			r.Get("/me",                 authH.Me)
 			r.Put("/me",                 authH.UpdateProfile)
+			r.Post("/me/photo",          photoH.UploadPhoto)
 			r.Post("/logout-all",        authH.LogoutAll)
 			r.Post("/change-password",   authH.ChangePassword)
 			r.Post("/send-verification", authH.SendVerificationEmail)

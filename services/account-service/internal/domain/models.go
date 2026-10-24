@@ -68,6 +68,8 @@ type User struct {
 	Name                 string     `json:"name"`
 	Role                 UserRole   `json:"role"`
 	Status               UserStatus `json:"status"`
+	ProfilePhotoKey      *string    `json:"profile_photo_key,omitempty"`
+	GoogleID             *string    `json:"google_id,omitempty"`
 	FailedLoginAttempts  int        `json:"-"`
 	LockedUntil          *time.Time `json:"-"`
 	LastLoginAt          *time.Time `json:"last_login_at,omitempty"`
@@ -184,6 +186,15 @@ type VerifyEmailRequest struct {
 
 type UpdateProfileRequest struct {
 	Name string `json:"name"`
+}
+
+// GoogleLoginRequest is used internally for Google OAuth callback processing.
+type GoogleUserInfo struct {
+	GoogleID    string `json:"sub"`
+	Email       string `json:"email"`
+	Name        string `json:"name"`
+	VerifiedEmail bool `json:"verified_email"`
+	PictureURL  string `json:"picture"`
 }
 
 type CreateTenantRequest struct {
