@@ -4,8 +4,8 @@ FROM golang:1.22-alpine AS builder
 RUN apk add --no-cache git ca-certificates tzdata
 
 WORKDIR /app
-COPY go.mod ./
-RUN touch go.sum && go mod download || true
+COPY go.mod go.sum ./
+RUN go mod download
 COPY . .
 RUN go mod tidy && \
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
