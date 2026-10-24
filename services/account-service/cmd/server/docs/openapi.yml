@@ -2,7 +2,7 @@ openapi: "3.0.3"
 
 info:
   title: EthioScript — Account Service
-  version: "1.0.0"
+  version: "2.0.0"
   description: |
     Full account management microservice.
 
@@ -11,18 +11,22 @@ info:
     **No `/api/v1` prefix** — routes are clean and flat.
 
     ## Authentication
-    - Public endpoints: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/forgot-password`, `POST /auth/reset-password`, `POST /auth/verify-email`
-    - Protected endpoints require: `Authorization: Bearer <access_token>`
+    - Public: `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`,
+      `POST /auth/forgot-password`, `POST /auth/reset-password`, `POST /auth/verify-email`,
+      `GET /auth/google`, `GET /auth/google/callback`
+    - Protected: `Authorization: Bearer <access_token>`
 
 servers:
   - url: http://localhost:8000
-    description: Local development (host port 8000 → container port 6000; Chrome blocks 6000)
+    description: Local development (host port 8000 → container 6000)
   - url: https://accounts.ethioscript.io
     description: Production
 
 tags:
   - name: auth
-    description: Registration, login, tokens, password, email verification
+    description: Registration, login, tokens, password, email verification, Google OAuth
+  - name: profile
+    description: Profile photo upload
   - name: users
     description: User management within a tenant (Tenant Admin+)
   - name: tenants
@@ -38,7 +42,7 @@ components:
       type: http
       scheme: bearer
       bearerFormat: JWT
-      description: JWT access token from POST /auth/login
+      description: JWT access token from POST /auth/login or GET /auth/google/callback
 
   schemas:
 
@@ -86,6 +90,17 @@ components:
         role:           { $ref: '#/components/schemas/UserRole' }
         status:         { $ref: '#/components/schemas/UserStatus' }
         email_verified: { type: boolean }
+        profile_photo_key:
+          type: string
+          nullable: true
+          description: |
+            MinIO object key for the user's profile photo, or a Google CDN URL
+            for users who signed in with Google.
+          example: "tenant-uuid/profiles/user-uuid/photo.jpg"
+        google_id:
+          type: string
+          nullable: true
+          description: Google OAuth subject ID — present only for Google sign-in users
         last_login_at:  { type: string, format: date-time, nullable: true }
         created_at:     { type: string, format: date-time }
         updated_at:     { type: string, format: date-time }
@@ -100,36 +115,19 @@ components:
           example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
         refresh_token:
           type: string
-          description: Opaque 64-char hex token for rotation (default 7 days)
-        expires_at:
-          type: string
-          format: date-time
-        token_type:
-          type: string
-          example: Bearer
-        user:
-          $ref: '#/components/schemas/User'
+          description: Opaque 64-char hex token (default 7 days)
+        expires_at:  { type: string, format: date-time }
+        token_type:  { type: string, example: Bearer }
+        user:        { $ref: '#/components/schemas/User' }
 
     RegisterRequest:
       type: object
       required: [name, email, password]
       properties:
-        tenant_slug:
-          type: string
-          example: default
-          description: Slug of the tenant to register under. Defaults to "default" if omitted.
-        name:
-          type: string
-          example: Abebe Kebede
-        email:
-          type: string
-          format: email
-          example: abebe@example.com
-        password:
-          type: string
-          format: password
-          minLength: 8
-          description: Must contain uppercase, lowercase, and a digit
+        tenant_slug: { type: string, example: default }
+        name:        { type: string, example: Abebe Kebede }
+        email:       { type: string, format: email, example: abebe@example.com }
+        password:    { type: string, format: password, minLength: 8 }
 
     LoginRequest:
       type: object
@@ -204,7 +202,7 @@ components:
         tenant_id:    { type: string, format: uuid }
         user_id:      { type: string, format: uuid }
         name:         { type: string }
-        key_prefix:   { type: string, description: "First 8 chars of the raw key (safe to display)" }
+        key_prefix:   { type: string, description: "First 8 chars of raw key (safe to display)" }
         scopes:       { type: array, items: { type: string } }
         expires_at:   { type: string, format: date-time, nullable: true }
         revoked:      { type: boolean }
@@ -216,32 +214,37 @@ components:
       required: [name]
       properties:
         name:       { type: string, example: "CI/CD pipeline key" }
-        scopes:     { type: array, items: { type: string }, example: ["documents:read", "documents:write"] }
+        scopes:     { type: array, items: { type: string }, example: ["documents:read"] }
         expires_at: { type: string, format: date-time, nullable: true }
 
     CreateAPIKeyResponse:
       type: object
       properties:
-        api_key:
-          $ref: '#/components/schemas/APIKey'
+        api_key: { $ref: '#/components/schemas/APIKey' }
         raw_key:
           type: string
-          description: "Full API key — shown ONCE. Store securely. Format: es_<64-hex-chars>"
-          example: "es_a1b2c3d4e5f6..."
+          description: "Full API key shown ONCE. Format: es_<64-hex>"
+          example: "es_a1b2c3d4..."
+
+    PhotoUploadResponse:
+      type: object
+      properties:
+        photo_url:
+          type: string
+          description: Public URL of the uploaded profile photo
+          example: "http://minio:9000/ethioscript-assets/tenant-uuid/profiles/user-uuid/photo.jpg"
 
     HealthResponse:
       type: object
       properties:
         status:    { type: string, enum: [ok, degraded] }
-        version:   { type: string, example: "3.1.0" }
+        version:   { type: string, example: "2.0.0" }
         timestamp: { type: string, format: date-time }
         services:
           type: object
           additionalProperties: { type: string }
 
 paths:
-
-  # ── System ──────────────────────────────────────────────────────────────────
 
   /health:
     get:
@@ -268,8 +271,6 @@ paths:
       responses:
         "200": { description: Ready }
         "503": { description: Not ready }
-
-  # ── Auth — public ────────────────────────────────────────────────────────────
 
   /auth/register:
     post:
@@ -317,7 +318,7 @@ paths:
     post:
       tags: [auth]
       summary: Refresh access token
-      description: Exchanges a valid refresh token for a **new rotated** access + refresh token pair.
+      description: Exchanges a valid refresh token for a new rotated access + refresh token pair.
       operationId: refreshToken
       requestBody:
         required: true
@@ -391,6 +392,39 @@ paths:
               schema: { $ref: '#/components/schemas/User' }
         "400": { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
+  /auth/me/photo:
+    post:
+      tags: [profile]
+      summary: Upload profile photo
+      description: |
+        Upload a profile photo as `multipart/form-data` with field name `photo`.
+        Accepted types: JPEG, PNG, WebP, GIF. Maximum size: **5 MB**.
+        The photo is stored in MinIO and the public URL is returned.
+      operationId: uploadProfilePhoto
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [photo]
+              properties:
+                photo:
+                  type: string
+                  format: binary
+                  description: Image file (JPEG/PNG/WebP/GIF, max 5 MB)
+      responses:
+        "200":
+          description: Photo uploaded successfully
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PhotoUploadResponse' }
+        "400": { description: Missing file or unsupported type, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "413": { description: File exceeds 5 MB, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "401": { description: Unauthenticated, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
   /auth/change-password:
     post:
       tags: [auth]
@@ -406,7 +440,7 @@ paths:
             schema: { $ref: '#/components/schemas/ChangePasswordRequest' }
       responses:
         "204": { description: Password changed }
-        "400": { description: Password policy violation, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "400": { description: Policy violation, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
         "401": { description: Wrong current password, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
   /auth/forgot-password:
@@ -414,8 +448,8 @@ paths:
       tags: [auth]
       summary: Request password reset
       description: |
-        Sends a password-reset link to the email address.
-        Always returns 204 — even if the email does not exist — to prevent account enumeration.
+        Sends a password-reset link to the user's email.
+        Always returns 204 even if the email does not exist (prevents enumeration).
       operationId: forgotPassword
       requestBody:
         required: true
@@ -423,7 +457,7 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/ForgotPasswordRequest' }
       responses:
-        "204": { description: Reset email sent (if account exists) }
+        "204": { description: Reset email sent if account exists }
 
   /auth/reset-password:
     post:
@@ -463,15 +497,48 @@ paths:
         "204": { description: Email verified }
         "400": { description: Token invalid or expired, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
-  # ── API Keys ─────────────────────────────────────────────────────────────────
+  /auth/google:
+    get:
+      tags: [auth]
+      summary: Initiate Google Sign-In
+      description: |
+        Redirects the browser to Google's OAuth2 consent screen.
+        After the user grants permission, Google redirects to `GET /auth/google/callback`.
+        Returns 501 if `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are not configured.
+      operationId: googleInitiate
+      responses:
+        "302":
+          description: Redirect to Google consent screen
+          headers:
+            Location: { schema: { type: string, format: uri } }
+        "501": { description: Google OAuth not configured, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /auth/google/callback:
+    get:
+      tags: [auth]
+      summary: Google OAuth2 callback
+      description: |
+        Exchanges the Google authorization code for user info.
+        Creates the account on first sign-in, links Google ID on subsequent ones.
+        Returns EthioScript JWT tokens identical to the normal login response.
+        This URL is called automatically by Google — do not call it directly.
+      operationId: googleCallback
+      parameters:
+        - { name: code,  in: query, required: true,  schema: { type: string }, description: Authorization code from Google }
+        - { name: state, in: query, required: true,  schema: { type: string }, description: CSRF state token }
+      responses:
+        "200":
+          description: Authenticated via Google
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TokenResponse' }
+        "400": { description: Invalid state or Google auth failed, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
   /api-keys:
     post:
       tags: [api-keys]
       summary: Create API key
-      description: |
-        Creates a new API key. The `raw_key` is returned **once only** — store it securely.
-        Format: `es_<64-hex-chars>`
+      description: The `raw_key` is returned **once only** — store it securely. Format `es_<64-hex>`.
       operationId: createAPIKey
       security:
         - BearerAuth: []
@@ -490,7 +557,7 @@ paths:
     get:
       tags: [api-keys]
       summary: List API keys
-      description: Returns all active (non-revoked) API keys for the authenticated user. Raw key is never returned.
+      description: Returns all active (non-revoked) API keys. Raw key is never returned after creation.
       operationId: listAPIKeys
       security:
         - BearerAuth: []
@@ -516,13 +583,11 @@ paths:
         "204": { description: Key revoked }
         "404": { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
-  # ── Users ────────────────────────────────────────────────────────────────────
-
   /users:
     get:
       tags: [users]
       summary: List users in tenant
-      description: Paginated user list scoped to the authenticated user's tenant. Requires TENANT_ADMIN or PLATFORM_OPERATOR.
+      description: Paginated. Requires TENANT_ADMIN or PLATFORM_OPERATOR.
       operationId: listUsers
       security:
         - BearerAuth: []
@@ -556,7 +621,7 @@ paths:
     delete:
       tags: [users]
       summary: Delete user
-      description: Soft-deletes user and revokes all their sessions.
+      description: Soft-deletes user and revokes all sessions.
       operationId: deleteUser
       security:
         - BearerAuth: []
@@ -601,7 +666,7 @@ paths:
     post:
       tags: [users]
       summary: Activate user
-      description: Re-activates a suspended user account.
+      description: Re-activates a suspended account.
       operationId: activateUser
       security:
         - BearerAuth: []
@@ -609,8 +674,6 @@ paths:
         - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
       responses:
         "204": { description: Activated }
-
-  # ── Tenants ──────────────────────────────────────────────────────────────────
 
   /tenants:
     post:
