@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,8 +25,9 @@ import (
 	"go.uber.org/zap"
 )
 
-//go:embed docs/openapi.yml
-var openapiSpec embed.FS
+// openapiSpecPath is read at request time — update the file and restart the
+// container to see changes in Swagger UI, no image rebuild required.
+const openapiSpecPath = "/app/docs/openapi.yml"
 
 func main() {
 	log, _ := zap.NewProduction()
@@ -128,11 +128,16 @@ func main() {
 	})
 	r.Handle("/metrics", promhttp.Handler())
 
-	// ── Swagger UI (embedded spec) ────────────────────────────────────────────
+	// ── Swagger UI — spec read from disk, no rebuild needed on spec changes ──
 	r.Get("/docs/openapi.yml", func(w http.ResponseWriter, r *http.Request) {
-		data, _ := openapiSpec.ReadFile("docs/openapi.yml")
+		data, err := os.ReadFile(openapiSpecPath)
+		if err != nil {
+			http.Error(w, "openapi spec not found", http.StatusNotFound)
+			return
+		}
 		w.Header().Set("Content-Type", "application/yaml")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Cache-Control", "no-cache")
 		_, _ = w.Write(data)
 	})
 	swaggerHandlerJob := httpSwagger.Handler(

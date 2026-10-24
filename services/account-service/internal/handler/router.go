@@ -1,8 +1,8 @@
 package handler
 
 import (
-	"embed"
 	"net/http"
+	"os"
 
 	"github.com/ethioscript/account-service/internal/auth"
 	"github.com/ethioscript/account-service/internal/config"
@@ -21,7 +21,8 @@ import (
 )
 
 // NewRouter wires all routes for the account-service.
-// Routes are clean — no /api/v1 prefix.
+// specPath is the filesystem path to openapi.yml — read at request time so
+// updates to the spec file take effect on container restart, no rebuild needed.
 func NewRouter(
 	cfg *config.Config,
 	db *pgxpool.Pool,
@@ -31,7 +32,7 @@ func NewRouter(
 	photoH *PhotoHandler,
 	googleH *GoogleHandler,
 	log *zap.Logger,
-	openapiFS embed.FS,
+	specPath string,
 ) http.Handler {
 
 	r := chi.NewRouter()
@@ -69,21 +70,20 @@ func NewRouter(
 	r.Get("/ready", healthH.Readiness)
 	r.Handle("/metrics", promhttp.Handler())
 
-	// ── Swagger UI ────────────────────────────────────────────────────────────
+	// ── Swagger UI — spec served from disk (no rebuild needed on spec changes) ──
 	if cfg.Swagger.Enabled {
-		// Serve the raw OpenAPI spec
 		r.Get("/docs/openapi.yml", func(w http.ResponseWriter, r *http.Request) {
-			data, err := openapiFS.ReadFile("docs/openapi.yml")
+			data, err := os.ReadFile(specPath)
 			if err != nil {
-				http.Error(w, "spec not found", http.StatusNotFound)
+				http.Error(w, "openapi spec not found", http.StatusNotFound)
 				return
 			}
 			w.Header().Set("Content-Type", "application/yaml; charset=utf-8")
 			w.Header().Set("Access-Control-Allow-Origin", "*")
+			w.Header().Set("Cache-Control", "no-cache")
 			_, _ = w.Write(data)
 		})
 
-		// Swagger UI — serve on both /docs and /docs/* so browser navigation works
 		swaggerHandler := httpSwagger.Handler(
 			httpSwagger.URL("/docs/openapi.yml"),
 			httpSwagger.DeepLinking(true),

@@ -2,22 +2,22 @@ openapi: "3.0.3"
 
 info:
   title: EthioScript — Document Service API
-  version: "1.0.0"
+  version: "2.0.0"
   description: |
-    **Internal microservice** — handles document lifecycle, metadata, review, and approval.
+    **Internal microservice** — handles asset upload initiation, document lifecycle,
+    OCR/STT result retrieval, human review, approval, retry, and export.
 
-    This service is called by the API Gateway; direct calls require the `X-Internal-Key` header.
-    Use the **Account Service** (`http://localhost:8000`) for external access.
+    Direct calls require the `X-Internal-Key` header plus `X-Tenant-ID` / `X-User-ID`.
 
 servers:
-  - url: http://localhost:6001/api/v1
+  - url: http://localhost:6001
     description: Direct (internal / dev)
-  - url: http://localhost:8000
-    description: Via Account Service (recommended)
 
 tags:
+  - name: assets
+    description: File upload initiation — generates MinIO pre-signed PUT URLs
   - name: documents
-    description: Document lifecycle management
+    description: Document lifecycle, review, and approval
   - name: system
     description: Health and metrics
 
@@ -27,12 +27,12 @@ components:
       type: apiKey
       in: header
       name: X-Internal-Key
-      description: Internal service-to-service API key (injected by API Gateway)
+      description: Internal service-to-service API key
     TenantHeader:
       type: apiKey
       in: header
       name: X-Tenant-ID
-      description: Tenant UUID (injected by API Gateway from JWT)
+      description: Tenant UUID (from JWT)
 
   schemas:
     ErrorResponse:
@@ -48,6 +48,49 @@ components:
     TaskType:
       type: string
       enum: [OCR, STT, CLASSIFICATION, EXPORT]
+
+    ExportFormat:
+      type: string
+      enum: [TXT, JSON, DOCX]
+
+    InitUploadRequest:
+      type: object
+      required: [filename, media_type, size_bytes]
+      properties:
+        filename:
+          type: string
+          example: "amharic_contract.pdf"
+        media_type:
+          type: string
+          enum: [application/pdf, image/jpeg, image/png, image/tiff, image/webp, audio/mpeg, audio/wav, audio/mp4, audio/ogg]
+          example: "application/pdf"
+        size_bytes:
+          type: integer
+          format: int64
+          example: 1048576
+        checksum_sha256:
+          type: string
+          example: "e3b0c44298fc1c149afbf4c8996fb924..."
+
+    InitUploadResponse:
+      type: object
+      properties:
+        asset_id:
+          type: string
+          format: uuid
+          description: Asset ID to use in POST /documents
+        upload_url:
+          type: string
+          format: uri
+          description: Pre-signed MinIO PUT URL — upload the file directly here
+          example: "http://minio:9000/ethioscript-assets/tenant/assets/uuid/file.pdf?..."
+        upload_method:
+          type: string
+          example: PUT
+        expires_at:
+          type: string
+          format: date-time
+          description: Pre-signed URL expires after 15 minutes
 
     Document:
       type: object
@@ -83,9 +126,12 @@ components:
       type: object
       required: [asset_id, filename]
       properties:
-        asset_id:    { type: string, format: uuid }
-        filename:    { type: string }
-        language:    { type: string, default: amh }
+        asset_id:
+          type: string
+          format: uuid
+          description: ID returned by POST /assets
+        filename:    { type: string, example: "amharic_contract.pdf" }
+        language:    { type: string, default: amh, example: amh }
         task_type:   { $ref: '#/components/schemas/TaskType' }
         title:       { type: string, nullable: true }
         description: { type: string, nullable: true }
@@ -95,7 +141,9 @@ components:
       type: object
       required: [text]
       properties:
-        text: { type: string }
+        text:
+          type: string
+          description: Corrected text to save as draft
 
     ResultVersion:
       type: object
@@ -104,6 +152,7 @@ components:
         document_id:      { type: string, format: uuid }
         version:          { type: integer }
         is_approved:      { type: boolean }
+        raw_text_key:     { type: string, nullable: true, description: MinIO object key for raw extracted text }
         approved_text:    { type: string, nullable: true }
         confidence_score: { type: number, nullable: true }
         model_metadata:   { type: object }
@@ -113,6 +162,22 @@ components:
         approved_by:      { type: string, format: uuid, nullable: true }
         approved_at:      { type: string, format: date-time, nullable: true }
         created_at:       { type: string, format: date-time }
+
+    ExportRequest:
+      type: object
+      properties:
+        format:
+          $ref: '#/components/schemas/ExportFormat'
+          description: "Default: TXT"
+
+    ExportResponse:
+      type: object
+      properties:
+        export_id:   { type: string, format: uuid }
+        format:      { type: string }
+        object_key:  { type: string, description: MinIO object key for the generated export file }
+        status:      { type: string, example: COMPLETED }
+        created_at:  { type: string, format: date-time }
 
 security:
   - InternalKey: []
@@ -136,18 +201,52 @@ paths:
                   status:  { type: string }
                   service: { type: string }
 
+  /assets:
+    post:
+      tags: [assets]
+      summary: Initiate file upload
+      description: |
+        Creates an asset record and returns a **pre-signed MinIO PUT URL**.
+
+        **Workflow:**
+        1. `POST /assets` — get `asset_id` + `upload_url`
+        2. `PUT <upload_url>` — upload the file directly to MinIO (from browser/client)
+        3. `POST /documents` — create the document using `asset_id`
+      operationId: initUpload
+      parameters:
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InitUploadRequest' }
+            example:
+              filename: "amharic_contract.pdf"
+              media_type: "application/pdf"
+              size_bytes: 1048576
+              checksum_sha256: "e3b0c44298fc1c149afbf4c8996fb924..."
+      responses:
+        "201":
+          description: Asset registered — upload URL ready
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InitUploadResponse' }
+        "400": { description: Validation error, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
   /documents:
     post:
       tags: [documents]
       summary: Create document + processing job
       description: |
-        Atomically inserts document, processing job, and outbox event in one PostgreSQL transaction.
-        Returns immediately with QUEUED status.
+        Atomically inserts document, processing job, and outbox event in one transaction.
+        The outbox publisher in job-orchestrator picks up the event and routes it to the
+        correct worker queue (OCR or STT) based on `task_type`.
+        Returns immediately with status `QUEUED`.
       operationId: createDocument
       parameters:
         - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
         - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
-        - { name: X-User-Role, in: header, required: true, schema: { type: string } }
       requestBody:
         required: true
         content:
@@ -155,27 +254,37 @@ paths:
             schema: { $ref: '#/components/schemas/CreateDocumentRequest' }
       responses:
         "201":
-          description: Document created
+          description: Document created and queued
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Document' }
-        "400":
-          description: Validation error
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        "400": { description: Validation error or asset not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
     get:
       tags: [documents]
-      summary: List documents (tenant-scoped)
+      summary: List documents (tenant-scoped, filterable)
       operationId: listDocuments
       parameters:
-        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
-        - { name: page,        in: query,  schema: { type: integer, default: 1 } }
-        - { name: page_size,   in: query,  schema: { type: integer, default: 20 } }
+        - { name: X-Tenant-ID, in: header,  required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header,  required: true, schema: { type: string, format: uuid } }
+        - { name: page,        in: query,   schema: { type: integer, default: 1 } }
+        - { name: page_size,   in: query,   schema: { type: integer, default: 20, maximum: 100 } }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/DocumentStatus' }
+          description: Filter by document status
+        - name: language
+          in: query
+          schema: { type: string }
+          description: Filter by language code (e.g. amh, eng)
+          example: amh
+        - name: task_type
+          in: query
+          schema: { $ref: '#/components/schemas/TaskType' }
+          description: Filter by task type (OCR or STT)
       responses:
         "200":
-          description: Paginated list
+          description: Paginated document list
           content:
             application/json:
               schema: { $ref: '#/components/schemas/DocumentListResponse' }
@@ -188,17 +297,14 @@ paths:
       parameters:
         - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
         - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
       responses:
         "200":
           description: Document detail
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Document' }
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
     delete:
       tags: [documents]
@@ -207,10 +313,32 @@ paths:
       parameters:
         - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
         - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
       responses:
         "204": { description: Deleted }
+        "404": { description: Not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /documents/{id}/result:
+    get:
+      tags: [documents]
+      summary: Get latest result version
+      description: |
+        Returns the most recent `ResultVersion` for the document.
+        Available once the document reaches `REVIEW_REQUIRED` status.
+        Contains the raw extracted text key (MinIO), confidence score, and model metadata.
+      operationId: getResult
+      parameters:
+        - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: Latest result version
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ResultVersion' }
         "404":
-          description: Not found
+          description: Document not found or no result yet
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorResponse' }
@@ -218,7 +346,8 @@ paths:
   /documents/{id}/result/draft:
     put:
       tags: [documents]
-      summary: Save reviewer draft
+      summary: Save reviewer draft correction
+      description: Saves corrected text as a draft result version. Document must be in `REVIEW_REQUIRED` status.
       operationId: saveDraft
       parameters:
         - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
@@ -231,16 +360,16 @@ paths:
             schema: { $ref: '#/components/schemas/SaveDraftRequest' }
       responses:
         "204": { description: Draft saved }
-        "409":
-          description: Not in editable state
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        "409": { description: Not in editable state, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
 
   /documents/{id}/approve:
     post:
       tags: [documents]
       summary: Approve document result
+      description: |
+        Marks the latest result version as approved and transitions document to `APPROVED`.
+        Document must be in `REVIEW_REQUIRED` status.
+        Writes an audit event.
       operationId: approveDocument
       parameters:
         - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
@@ -248,8 +377,56 @@ paths:
         - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
       responses:
         "204": { description: Approved }
-        "409":
-          description: Invalid state
+        "409": { description: Invalid state transition, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /documents/{id}/retry:
+    post:
+      tags: [documents]
+      summary: Retry failed document
+      description: |
+        Requeues a `FAILED` document for reprocessing.
+        Creates a new processing job and outbox event.
+        Document transitions back to `QUEUED`.
+      operationId: retryDocument
+      parameters:
+        - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "202": { description: Retry queued }
+        "404": { description: Document not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "409": { description: Document is not in FAILED state, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /documents/{id}/exports:
+    post:
+      tags: [documents]
+      summary: Export document result
+      description: |
+        Generates an export artifact from the latest approved or reviewed result.
+
+        **Supported formats:**
+        - `TXT` — plain text extracted content (default)
+        - `JSON` — full ResultVersion JSON including segments and metadata
+        - `DOCX` — Word document (stub — returns TXT for now)
+
+        The export is stored in MinIO and the object key is returned.
+      operationId: exportDocument
+      parameters:
+        - { name: id,          in: path,   required: true, schema: { type: string, format: uuid } }
+        - { name: X-Tenant-ID, in: header, required: true, schema: { type: string, format: uuid } }
+        - { name: X-User-ID,   in: header, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExportRequest' }
+            example:
+              format: TXT
+      responses:
+        "201":
+          description: Export generated
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ErrorResponse' }
+              schema: { $ref: '#/components/schemas/ExportResponse' }
+        "404": { description: Document or result not found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "500": { description: Export generation failed, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }

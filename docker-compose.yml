@@ -190,6 +190,8 @@ services:
     restart: unless-stopped
     ports:
       - "8000:6000"
+    volumes:
+      - ./services/account-service/cmd/server/docs/openapi.yml:/app/docs/openapi.yml:ro
     environment:
       PORT: "6000"
       ENV: ${ENV:-development}
@@ -239,6 +241,8 @@ services:
     restart: unless-stopped
     ports:
       - "6001:6001"
+    volumes:
+      - ./services/document-service/cmd/server/docs/openapi.yml:/app/docs/openapi.yml:ro
     environment:
       PORT: "6001"
       ENV: ${ENV:-development}
@@ -281,6 +285,8 @@ services:
     restart: unless-stopped
     ports:
       - "6002:6002"
+    volumes:
+      - ./services/job-orchestrator/cmd/server/docs/openapi.yml:/app/docs/openapi.yml:ro
     environment:
       PORT: "6002"
       ENV: ${ENV:-development}

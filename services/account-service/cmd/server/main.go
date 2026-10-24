@@ -16,7 +16,6 @@ package main
 
 import (
 	"context"
-	"embed"
 	"errors"
 	"net/http"
 	"os"
@@ -36,8 +35,9 @@ import (
 	"go.uber.org/zap"
 )
 
-//go:embed docs/openapi.yml
-var openapiFS embed.FS
+// openapiSpecPath is the location of the OpenAPI spec inside the container.
+// docker-compose mounts the local file here so changes take effect on restart — no rebuild needed.
+const openapiSpecPath = "/app/docs/openapi.yml"
 
 func main() {
 	// ── Logger ────────────────────────────────────────────────────────────────
@@ -109,7 +109,7 @@ func main() {
 	googleH := handler.NewGoogleHandler(uc, cfg.Google, log)
 
 	// ── Router ────────────────────────────────────────────────────────────────
-	router := handler.NewRouter(cfg, db, rdb, jwtMgr, uc, photoH, googleH, log, openapiFS)
+	router := handler.NewRouter(cfg, db, rdb, jwtMgr, uc, photoH, googleH, log, openapiSpecPath)
 
 	// ── HTTP Server ───────────────────────────────────────────────────────────
 	srv := &http.Server{
