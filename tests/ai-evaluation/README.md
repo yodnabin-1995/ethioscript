@@ -72,7 +72,7 @@ All settings are configurable via environment variables:
 | `OCR_PSM` | `3` | Tesseract page segmentation mode |
 | `OCR_OEM` | `3` | Tesseract OCR engine mode |
 | `OCR_CER_THRESHOLD` | `0.15` | Maximum acceptable CER (15%) |
-| `OCR_WER_THRESHOLD` | `0.25` | Maximum acceptable WER (25%) |
+| `OCR_WER_THRESHOLD` | `0.25`z | Maximum acceptable WER (25%) |
 | `OCR_MODEL_NAME` | `tesseract` | Model name for report |
 | `OCR_MODEL_VERSION` | `5.x` | Model version for report |
 | `OCR_RUN_ID` | auto UUID | Unique run identifier |

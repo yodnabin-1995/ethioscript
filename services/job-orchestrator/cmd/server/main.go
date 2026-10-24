@@ -141,7 +141,7 @@ func main() {
 		_, _ = w.Write(data)
 	})
 	swaggerHandlerJob := httpSwagger.Handler(
-		httpSwagger.URL("/docs/openapi.yml"),
+		httpSwagger.URL("/docs/openapi.yml?v=2"),
 		httpSwagger.DeepLinking(true),
 		httpSwagger.DocExpansion("list"),
 	)
