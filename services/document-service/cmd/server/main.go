@@ -94,7 +94,7 @@ func main() {
 
 	// Public system endpoints (no auth)
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
+		http.Redirect(w, r, "/docs", http.StatusFound)
 	})
 	r.Get("/health", docH.Health)
 	r.Handle("/metrics", promhttp.Handler())

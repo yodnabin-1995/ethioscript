@@ -5,3 +5,5 @@ python-dotenv==1.0.1
 pydantic==2.8.2
 redis==5.0.8
 prometheus-client==0.20.0
+gTTS==2.5.1
+python-multipart==0.0.9

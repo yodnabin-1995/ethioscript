@@ -337,9 +337,13 @@ services:
     environment:
       AI_SERVICE_SECRET:    ${AI_SERVICE_SECRET:-change_me_ai_secret}
       LLM_PROVIDER:         ${LLM_PROVIDER:-mock}
-      LLM_MODEL:            ${LLM_MODEL:-gpt-4o-mini}
+      LLM_MODEL:            ${LLM_MODEL:-openai/gpt-oss-120b}
       LLM_API_KEY:          ${LLM_API_KEY:-}
       LLM_BASE_URL:         ${LLM_BASE_URL:-}
+      WHISPER_MODEL:        ${WHISPER_MODEL:-whisper-large-v3-turbo}
+      TTS_PROVIDER:         ${TTS_PROVIDER:-gtts}
+      TTS_VOICE:            ${TTS_VOICE:-alloy}
+      MAX_AUDIO_MB:         ${MAX_AUDIO_MB:-25}
       DOCUMENT_SERVICE_URL: http://document-service:6001
       INTERNAL_API_KEY:     ${INTERNAL_API_KEY:-EthioInternalKey2026!}
       REDIS_URL:            redis://:${REDIS_PASSWORD:-redispass}@redis:6379/2
