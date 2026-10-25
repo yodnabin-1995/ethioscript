@@ -41,9 +41,10 @@ from typing import Literal
 import httpx
 import redis.asyncio as aioredis
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile, status
+from fastapi import FastAPI, File, Form, HTTPException, Request, Security, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.security.api_key import APIKeyHeader
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from pydantic import BaseModel, Field
 from starlette.responses import Response
@@ -398,6 +399,7 @@ translation, and more — all optimised for Ethiopian languages.
 
 ### Authentication
 All endpoints require the `X-Service-Secret` header.
+Click the **Authorize** button above and enter your secret key.
 
 ### Supported Languages
 `amh` Amharic · `tir` Tigrinya · `orm` Afaan Oromoo · `eng` English
@@ -413,6 +415,23 @@ All endpoints require the `X-Service-Secret` header.
     openapi_url="/openapi.json",
 )
 
+# ── Security scheme — shows Authorize button in Swagger UI ───────────────────
+api_key_header = APIKeyHeader(
+    name="X-Service-Secret",
+    scheme_name="ServiceSecret",
+    description="Shared secret key — value of `AI_SERVICE_SECRET` in .env",
+    auto_error=False,
+)
+
+async def get_api_key(api_key: str = Security(api_key_header)) -> str:
+    if api_key != SERVICE_SECRET:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing X-Service-Secret header",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    return api_key
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
@@ -421,11 +440,10 @@ app.add_middleware(
 )
 
 def verify_secret(request: Request) -> None:
+    """Legacy helper kept for reference. Use get_api_key Security dependency instead."""
     if request.headers.get("X-Service-Secret", "") != SERVICE_SECRET:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
-                            detail="Invalid or missing X-Service-Secret header")
-
-# ═══════════════════════════════════════════════════════════════════════════════
+                            detail="Invalid or missing X-Service-Secret header")# ═══════════════════════════════════════════════════════════════════════════════
 # SYSTEM routes
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -461,8 +479,7 @@ async def metrics():
     summary="List available LLM models",
     description="Queries the active LLM provider and returns all models available on your account.",
 )
-async def list_models(request: Request):
-    verify_secret(request)
+async def list_models(api_key: str = Security(get_api_key)):
     if LLM_PROVIDER == "mock":
         return ModelsResponse(provider="mock", models=[ModelInfo(id="mock", owned_by="ethioscript")])
     if LLM_PROVIDER in ("openai", "groq"):
@@ -498,8 +515,7 @@ Send a conversation history and receive an AI reply.
 - Responds in the same language the user writes in
     """,
 )
-async def chat(request: Request, body: ChatRequest):
-    verify_secret(request)
+async def chat(request: Request, body: ChatRequest, api_key: str = Security(get_api_key)):
     rate_key = body.user_id or request.client.host
     if not await check_rate_limit(rate_key):
         RATE_LIMITED.inc()
@@ -541,8 +557,7 @@ async def chat(request: Request, body: ChatRequest):
     summary="Get conversation history",
     description="Retrieves the stored conversation history for a user from Redis.",
 )
-async def get_history(user_id: str, request: Request):
-    verify_secret(request)
+async def get_history(user_id: str, api_key: str = Security(get_api_key)):
     messages = await load_history(user_id)
     return HistoryResponse(user_id=user_id, messages=messages, count=len(messages))
 
@@ -553,8 +568,7 @@ async def get_history(user_id: str, request: Request):
     summary="Clear conversation history",
     description="Deletes the stored conversation history for a user from Redis.",
 )
-async def clear_history(user_id: str, request: Request):
-    verify_secret(request)
+async def clear_history(user_id: str, api_key: str = Security(get_api_key)):
     rdb = await get_redis()
     if rdb:
         await rdb.delete(f"ai_chat:history:{user_id}")
@@ -584,11 +598,10 @@ In `mock` mode returns a placeholder transcript.
     """,
 )
 async def transcribe_audio(
-    request: Request,
     file: UploadFile = File(..., description="Audio file (MP3/WAV/OGG/WEBM/FLAC/M4A, max 25 MB)"),
     language: str = Form("", description="Language hint: am, ti, en, om (leave empty for auto-detect)"),
+    api_key: str = Security(get_api_key),
 ):
-    verify_secret(request)
     start = time.monotonic()
 
     # Validate file size
@@ -694,8 +707,7 @@ When `TTS_PROVIDER=gtts`, uses Google Text-to-Speech (free, no key needed).
         }
     },
 )
-async def text_to_speech(request: Request, body: SpeakRequest):
-    verify_secret(request)
+async def text_to_speech(body: SpeakRequest, api_key: str = Security(get_api_key)):
 
     lang_map = {"am": "am", "ti": "ti", "en": "en", "om": "om", "amh": "am", "tir": "ti", "eng": "en", "orm": "om"}
     lang = lang_map.get(body.language, "en")
@@ -758,8 +770,7 @@ Output format can be `bullet`, `paragraph`, or `structured` (default).
 Returns the summary, key points, and word counts.
     """,
 )
-async def summarize(request: Request, body: SummarizeRequest):
-    verify_secret(request)
+async def summarize(body: SummarizeRequest, api_key: str = Security(get_api_key)):
 
     system = (
         "You are a document summarization assistant specializing in Ethiopian language documents. "
@@ -817,8 +828,7 @@ Translates text between any languages, with special support for:
 The LLM auto-detects the source language if not specified.
     """,
 )
-async def translate(request: Request, body: TranslateRequest):
-    verify_secret(request)
+async def translate(body: TranslateRequest, api_key: str = Security(get_api_key)):
 
     lang_names = {
         "amh": "Amharic", "eng": "English", "en": "English",
@@ -872,8 +882,7 @@ Particularly useful for:
 - Generating document tags automatically
     """,
 )
-async def extract_keywords(request: Request, body: AnalyzeTextRequest):
-    verify_secret(request)
+async def extract_keywords(body: AnalyzeTextRequest, api_key: str = Security(get_api_key)):
 
     system = "You are a keyword extraction specialist for Ethiopian language documents. Respond with valid JSON only."
     user = f"""Extract keywords, topics, and named entities from the following text.
@@ -917,8 +926,7 @@ Works with Amharic, Tigrinya, Oromo, and English.
 Useful for analysing feedback, reviews, and document content.
     """,
 )
-async def analyze_sentiment(request: Request, body: AnalyzeTextRequest):
-    verify_secret(request)
+async def analyze_sentiment(body: AnalyzeTextRequest, api_key: str = Security(get_api_key)):
 
     system = "You are a sentiment analysis specialist for Ethiopian and English text. Respond with valid JSON only."
     user = f"""Analyse the sentiment of the following text.
@@ -971,8 +979,7 @@ Optimised for Ethiopian scripts and languages:
 - **English**, Arabic, French, and other major languages
     """,
 )
-async def detect_language(request: Request, body: AnalyzeTextRequest):
-    verify_secret(request)
+async def detect_language(body: AnalyzeTextRequest, api_key: str = Security(get_api_key)):
 
     system = "You are a language detection specialist. Respond with valid JSON only."
     user = f"""Detect the language of the following text.
@@ -1024,8 +1031,7 @@ Particularly effective for improving low-confidence Tesseract output
 before human review.
     """,
 )
-async def ocr_correct(request: Request, body: OcrCorrectRequest):
-    verify_secret(request)
+async def ocr_correct(body: OcrCorrectRequest, api_key: str = Security(get_api_key)):
 
     script_hints = {
         "ethiopic": "The text uses Ethiopic (Fidel) script — Amharic or Tigrinya. Fix character substitution errors common in Tesseract OCR of Ethiopic script.",
