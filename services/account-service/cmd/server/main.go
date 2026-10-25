@@ -93,17 +93,18 @@ func main() {
 	uc      := usecase.NewAccountUseCase(repo, jwtMgr, cfg, log, mail)
 
 	// MinIO for profile photos
-	minioEndpoint := getEnv("MINIO_ENDPOINT", "minio:9000")
-	minioAccessKey := getEnv("MINIO_ACCESS_KEY", "minioadmin")
-	minioSecretKey := getEnv("MINIO_SECRET_KEY", "minioadmin123")
-	minioBucket    := getEnv("MINIO_BUCKET", "ethioscript-assets")
-	minioSSL, _    := parseBool(getEnv("MINIO_USE_SSL", "false"))
+	minioEndpoint    := getEnv("MINIO_ENDPOINT",    "minio:9000")
+	minioPublicURL   := getEnv("MINIO_PUBLIC_URL",  "localhost:6302") // browser-accessible
+	minioAccessKey   := getEnv("MINIO_ACCESS_KEY",  "minioadmin")
+	minioSecretKey   := getEnv("MINIO_SECRET_KEY",  "minioadmin123")
+	minioBucket      := getEnv("MINIO_BUCKET",      "ethioscript-assets")
+	minioSSL, _      := parseBool(getEnv("MINIO_USE_SSL", "false"))
 
 	var photoH *handler.PhotoHandler
 	if minioClient, err := storage.New(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioSSL); err != nil {
 		log.Warn("minio client failed — photo upload disabled", zap.Error(err))
 	} else {
-		photoH = handler.NewPhotoHandler(uc, minioClient, minioEndpoint, log)
+		photoH = handler.NewPhotoHandler(uc, minioClient, minioPublicURL, log)
 	}
 
 	googleH := handler.NewGoogleHandler(uc, cfg.Google, log)

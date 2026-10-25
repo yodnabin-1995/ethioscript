@@ -39,9 +39,11 @@ func (c *Client) PutObject(ctx context.Context, objectKey, contentType string, d
 	return nil
 }
 
-// PublicURL returns a direct URL to an object (works when bucket policy is public-read).
-func (c *Client) PublicURL(endpoint, objectKey string) string {
-	return fmt.Sprintf("http://%s/%s/%s", endpoint, c.bucket, objectKey)
+// PublicURL returns a browser-accessible URL to an object.
+// Uses publicEndpoint (e.g. localhost:6302) not the internal Docker hostname.
+func (c *Client) PublicURL(publicEndpoint, objectKey string) string {
+	scheme := "http"
+	return fmt.Sprintf("%s://%s/%s/%s", scheme, publicEndpoint, c.bucket, objectKey)
 }
 
 // ProfilePhotoKey returns the canonical MinIO key for a user's profile photo.

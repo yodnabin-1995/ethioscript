@@ -219,6 +219,7 @@ services:
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-internal-secret-key}
       # MinIO (profile photo storage)
       MINIO_ENDPOINT: minio:9000
+      MINIO_PUBLIC_URL: localhost:6302
       MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-MinioPass2026!}
       MINIO_BUCKET: ${MINIO_BUCKET:-ethioscript-assets}
