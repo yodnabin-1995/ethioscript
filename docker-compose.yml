@@ -246,6 +246,7 @@ services:
     environment:
       PORT: "6001"
       ENV: ${ENV:-development}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000}
       # Database
       POSTGRES_DSN: postgres://${POSTGRES_USER:-ethio}:${POSTGRES_PASSWORD:-ethiopass}@postgres:5432/${POSTGRES_DB:-ethioscript}?sslmode=disable
       # Broker
@@ -304,6 +305,7 @@ services:
       REDIS_DB: "1"
       # Internal auth
       INTERNAL_API_KEY: ${INTERNAL_API_KEY:-internal-secret-key}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000}
       # Job policy
       MAX_RETRY_ATTEMPTS: "3"
       RETRY_BACKOFF_BASE_SECONDS: "30"
