@@ -119,6 +119,7 @@ jobs:
         run: |
           psql -h localhost -U ethio -d ethioscript_test -f migrations/001_init_schema.sql
           psql -h localhost -U ethio -d ethioscript_test -f migrations/002_account_service_tables.sql
+          psql -h localhost -U ethio -d ethioscript_test -f migrations/003_user_profile_extensions.sql
 
       - name: Run integration tests
         working-directory: tests/integration
