@@ -94,7 +94,7 @@ func main() {
 
 	// Public system endpoints (no auth)
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/docs", http.StatusFound)
+		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
 	})
 	r.Get("/health", docH.Health)
 	r.Handle("/metrics", promhttp.Handler())
@@ -116,8 +116,12 @@ func main() {
 		httpSwagger.DeepLinking(true),
 		httpSwagger.DocExpansion("list"),
 	)
-	r.Get("/docs", swaggerHandler)
-	r.Get("/docs/", swaggerHandler)
+	r.Get("/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
+	})
+	r.Get("/docs/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
+	})
 	r.Get("/docs/*", swaggerHandler)
 
 	// ── Internal API — protected by X-Internal-Key ────────────────────────────

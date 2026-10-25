@@ -119,7 +119,7 @@ func main() {
 	// StripSlashes removed — breaks /docs/ Swagger navigation
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/docs", http.StatusFound)
+		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
 	})
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -145,8 +145,12 @@ func main() {
 		httpSwagger.DeepLinking(true),
 		httpSwagger.DocExpansion("list"),
 	)
-	r.Get("/docs", swaggerHandlerJob)
-	r.Get("/docs/", swaggerHandlerJob)
+	r.Get("/docs", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
+	})
+	r.Get("/docs/", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
+	})
 	r.Get("/docs/*", swaggerHandlerJob)
 
 	// Clean routes — protected by X-Internal-Key

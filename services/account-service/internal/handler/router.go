@@ -62,9 +62,9 @@ func NewRouter(
 	healthH  := NewHealthHandler(db, rdb)
 
 	// ── System routes (no auth) ───────────────────────────────────────────────
-	// Root → redirect to Swagger UI so browsing http://localhost:6000/ works
+	// Root → redirect to Swagger UI
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "/docs", http.StatusFound)
+		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
 	})
 	r.Get("/health", healthH.Health)
 	r.Get("/ready", healthH.Readiness)
@@ -90,8 +90,12 @@ func NewRouter(
 			httpSwagger.DocExpansion("list"),
 			httpSwagger.PersistAuthorization(true),
 		)
-		r.Get("/docs", swaggerHandler)
-		r.Get("/docs/", swaggerHandler)
+		r.Get("/docs", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/docs/index.html", http.StatusFound)
+		})
+		r.Get("/docs/", func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "/docs/index.html", http.StatusFound)
+		})
 		r.Get("/docs/*", swaggerHandler)
 	}
 
