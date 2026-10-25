@@ -35,6 +35,7 @@ import json
 import logging
 import os
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Literal
 
@@ -47,6 +48,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.security.api_key import APIKeyHeader
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 from pydantic import BaseModel, Field
+from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import Response
 
 load_dotenv()
@@ -70,12 +72,25 @@ HISTORY_TTL_SEC  = int(os.getenv("CHAT_HISTORY_TTL_SEC", "86400"))
 ALLOWED_ORIGINS  = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
 MAX_AUDIO_MB     = int(os.getenv("MAX_AUDIO_MB", "25"))
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+# ── Logging — true structured JSON, not a format string ──────────────────────
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='{"time":"%(asctime)s","level":"%(levelname)s","svc":"ai-chat","msg":"%(message)s"}',
-)
+class _JsonFormatter(logging.Formatter):
+    """Emit one valid JSON object per log record."""
+    def format(self, record: logging.LogRecord) -> str:
+        obj = {
+            "time":    self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level":   record.levelname,
+            "svc":     "ai-chat",
+            "msg":     record.getMessage(),
+        }
+        if record.exc_info:
+            obj["exc"] = self.formatException(record.exc_info)
+        return json.dumps(obj, ensure_ascii=False)
+
+_handler = logging.StreamHandler()
+_handler.setFormatter(_JsonFormatter())
+logging.root.setLevel(logging.INFO)
+logging.root.handlers = [_handler]
 log = logging.getLogger("ai-chat")
 
 # ── Prometheus ────────────────────────────────────────────────────────────────
@@ -423,8 +438,18 @@ api_key_header = APIKeyHeader(
     auto_error=False,
 )
 
-async def get_api_key(api_key: str = Security(api_key_header)) -> str:
+async def get_api_key(request: Request, api_key: str = Security(api_key_header)) -> str:
     if api_key != SERVICE_SECRET:
+        log.warning(json.dumps({
+            "time":     time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "level":    "WARNING",
+            "svc":      "ai-chat",
+            "msg":      "auth_failed",
+            "path":     request.url.path,
+            "method":   request.method,
+            "ip":       request.client.host if request.client else "unknown",
+            "provided": (api_key or "")[:8] + "..." if api_key else "(none)",
+        }))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or missing X-Service-Secret header",
@@ -432,6 +457,35 @@ async def get_api_key(api_key: str = Security(api_key_header)) -> str:
         )
     return api_key
 
+
+# ── HTTP access log middleware ────────────────────────────────────────────────
+
+class AccessLogMiddleware(BaseHTTPMiddleware):
+    """Logs every HTTP request: method, path, status, duration, trace_id, ip."""
+    async def dispatch(self, request: Request, call_next):
+        trace_id = request.headers.get("X-Trace-ID") or str(uuid.uuid4())
+        start = time.monotonic()
+        response = await call_next(request)
+        duration = round(time.monotonic() - start, 4)
+        record = {
+            "time":     time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "level":    "ERROR" if response.status_code >= 500 else
+                        "WARNING" if response.status_code >= 400 else "INFO",
+            "svc":      "ai-chat",
+            "msg":      "request",
+            "method":   request.method,
+            "path":     request.url.path,
+            "status":   response.status_code,
+            "duration": duration,
+            "trace_id": trace_id,
+            "ip":       request.client.host if request.client else "unknown",
+        }
+        # Write directly to stdout to avoid double-JSON-serialisation from the custom formatter
+        print(json.dumps(record, ensure_ascii=False), flush=True)
+        response.headers["X-Trace-ID"] = trace_id
+        return response
+
+app.add_middleware(AccessLogMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,

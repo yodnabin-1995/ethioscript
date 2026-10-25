@@ -11,6 +11,10 @@ import (
 	"go.uber.org/zap"
 )
 
+// authLogger is a fallback logger used by writeUseCaseError (package-level helper).
+// Handlers that have h.log should prefer that; this covers unexpected 500s.
+var authLogger, _ = zap.NewProduction()
+
 // AuthHandler handles registration, login, token refresh, logout, and profile.
 type AuthHandler struct {
 	uc  *usecase.AccountUseCase
@@ -317,6 +321,7 @@ func (h *AuthHandler) VerifyEmail(w http.ResponseWriter, r *http.Request) {
 // ─── Error mapping helper ─────────────────────────────────────────────────────
 
 func writeUseCaseError(w http.ResponseWriter, r *http.Request, err error) {
+	traceID := middleware.GetTraceID(r.Context())
 	switch {
 	case errors.Is(err, domain.ErrNotFound):
 		middleware.WriteError(w, r, http.StatusNotFound, err.Error(), "NOT_FOUND")
@@ -325,6 +330,7 @@ func writeUseCaseError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, domain.ErrValidation):
 		middleware.WriteError(w, r, http.StatusBadRequest, err.Error(), "VALIDATION_ERROR")
 	case errors.Is(err, domain.ErrWrongPassword), errors.Is(err, domain.ErrUnauthorized):
+		// Don't log wrong passwords — expected, noisy
 		middleware.WriteError(w, r, http.StatusUnauthorized, "invalid credentials", "AUTH_FAILED")
 	case errors.Is(err, domain.ErrForbidden):
 		middleware.WriteError(w, r, http.StatusForbidden, err.Error(), "FORBIDDEN")
@@ -335,6 +341,13 @@ func writeUseCaseError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, domain.ErrPasswordPolicy):
 		middleware.WriteError(w, r, http.StatusBadRequest, err.Error(), "PASSWORD_POLICY")
 	default:
+		// 500 — unexpected error, always log with full details
+		authLogger.Error("unhandled usecase error",
+			zap.Error(err),
+			zap.String("method",   r.Method),
+			zap.String("path",     r.URL.Path),
+			zap.String("trace_id", traceID),
+		)
 		middleware.WriteError(w, r, http.StatusInternalServerError, "internal server error", "INTERNAL_ERROR")
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strconv"
 
 	"github.com/ethioscript/document-service/internal/domain"
+	"github.com/ethioscript/document-service/internal/middleware"
 	"github.com/ethioscript/document-service/internal/usecase"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -69,6 +70,11 @@ func (h *DocumentHandler) GetDocument(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		h.log.Error("get document failed",
+			zap.Error(err),
+			zap.String("doc_id", docID.String()),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		writeError(w, r, http.StatusInternalServerError, "could not retrieve document", "INTERNAL_ERROR")
 		return
 	}
@@ -91,6 +97,10 @@ func (h *DocumentHandler) ListDocuments(w http.ResponseWriter, r *http.Request) 
 		PageSize: pageSize,
 	})
 	if err != nil {
+		h.log.Error("list documents failed",
+			zap.Error(err),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		writeError(w, r, http.StatusInternalServerError, "could not list documents", "INTERNAL_ERROR")
 		return
 	}
@@ -124,6 +134,11 @@ func (h *DocumentHandler) SaveDraft(w http.ResponseWriter, r *http.Request) {
 			writeError(w, r, http.StatusConflict, "document is not in an editable state", "NOT_EDITABLE")
 			return
 		}
+		h.log.Error("save draft failed",
+			zap.Error(err),
+			zap.String("doc_id", docID.String()),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		writeError(w, r, http.StatusInternalServerError, "could not save draft", "INTERNAL_ERROR")
 		return
 	}
@@ -151,6 +166,11 @@ func (h *DocumentHandler) ApproveDocument(w http.ResponseWriter, r *http.Request
 			writeError(w, r, http.StatusConflict, "document cannot be approved in its current state", "INVALID_TRANSITION")
 			return
 		}
+		h.log.Error("approve document failed",
+			zap.Error(err),
+			zap.String("doc_id", docID.String()),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		writeError(w, r, http.StatusInternalServerError, "could not approve document", "INTERNAL_ERROR")
 		return
 	}
@@ -174,6 +194,11 @@ func (h *DocumentHandler) DeleteDocument(w http.ResponseWriter, r *http.Request)
 			writeError(w, r, http.StatusNotFound, "document not found", "NOT_FOUND")
 			return
 		}
+		h.log.Error("delete document failed",
+			zap.Error(err),
+			zap.String("doc_id", docID.String()),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		writeError(w, r, http.StatusInternalServerError, "could not delete document", "INTERNAL_ERROR")
 		return
 	}
@@ -235,6 +260,11 @@ func (h *DocumentHandler) GetResult(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		h.log.Error("get result failed",
+			zap.Error(err),
+			zap.String("doc_id", docID.String()),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		writeError(w, r, http.StatusInternalServerError, "could not retrieve result", "INTERNAL_ERROR")
 		return
 	}
@@ -262,6 +292,11 @@ func (h *DocumentHandler) RetryDocument(w http.ResponseWriter, r *http.Request) 
 			writeError(w, r, http.StatusConflict, "document can only be retried when FAILED", "INVALID_TRANSITION")
 			return
 		}
+		h.log.Error("retry document failed",
+			zap.Error(err),
+			zap.String("doc_id", docID.String()),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		writeError(w, r, http.StatusInternalServerError, "could not retry document", "INTERNAL_ERROR")
 		return
 	}
@@ -292,7 +327,11 @@ func (h *DocumentHandler) ExportDocument(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err != nil {
-		h.log.Error("export failed", zap.Error(err))
+		h.log.Error("export failed",
+			zap.Error(err),
+			zap.String("doc_id", docID.String()),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		writeError(w, r, http.StatusInternalServerError, "export failed", "EXPORT_FAILED")
 		return
 	}
@@ -330,6 +369,10 @@ func (h *DocumentHandler) ListDocumentsFiltered(w http.ResponseWriter, r *http.R
 
 	result, err := h.uc.ListDocumentsFiltered(r.Context(), params)
 	if err != nil {
+		h.log.Error("list documents filtered failed",
+			zap.Error(err),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		writeError(w, r, http.StatusInternalServerError, "could not list documents", "INTERNAL_ERROR")
 		return
 	}

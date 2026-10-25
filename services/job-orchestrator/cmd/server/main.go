@@ -116,7 +116,33 @@ func main() {
 	// ── HTTP router ───────────────────────────────────────────────────────
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RealIP)
-	// StripSlashes removed — breaks /docs/ Swagger navigation
+	// Structured request logger — logs every request with method, path, status, duration, trace_id
+	r.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+			traceID := req.Header.Get("X-Trace-ID")
+			if traceID == "" {
+				traceID = uuid.NewString()
+			}
+			w.Header().Set("X-Trace-ID", traceID)
+			start := time.Now()
+			wrapped := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+			next.ServeHTTP(wrapped, req)
+			lvl := log.Info
+			if wrapped.status >= 500 {
+				lvl = log.Error
+			} else if wrapped.status >= 400 {
+				lvl = log.Warn
+			}
+			lvl("request",
+				zap.String("method",     req.Method),
+				zap.String("path",       req.URL.Path),
+				zap.Int("status",        wrapped.status),
+				zap.Duration("duration", time.Since(start)),
+				zap.String("trace_id",   traceID),
+				zap.String("ip",         req.RemoteAddr),
+			)
+		})
+	})
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/docs/index.html", http.StatusFound)
@@ -171,6 +197,7 @@ func main() {
 			tenantIDStr := r.Header.Get("X-Tenant-ID")
 			tenantID, err := uuid.Parse(tenantIDStr)
 			if err != nil {
+				log.Warn("invalid tenant id", zap.String("value", tenantIDStr), zap.String("path", r.URL.Path))
 				http.Error(w, `{"error":"invalid tenant"}`, http.StatusUnauthorized)
 				return
 			}
@@ -185,6 +212,11 @@ func main() {
 				return
 			}
 			if err != nil {
+				log.Error("get job failed",
+					zap.Error(err),
+					zap.String("job_id", jobID.String()),
+					zap.String("tenant_id", tenantID.String()),
+				)
 				http.Error(w, `{"error":"internal error"}`, http.StatusInternalServerError)
 				return
 			}
@@ -202,6 +234,10 @@ func main() {
 				return
 			}
 			if err := jobUC.CancelJob(r.Context(), tenantID, jobID); err != nil {
+				log.Warn("cancel job failed",
+					zap.Error(err),
+					zap.String("job_id", jobID.String()),
+				)
 				http.Error(w, fmt.Sprintf(`{"error":"%s"}`, err.Error()), http.StatusConflict)
 				return
 			}
@@ -279,4 +315,15 @@ func mustGetEnv(key string) string {
 		panic(fmt.Sprintf("required env var %q is not set", key))
 	}
 	return v
+}
+
+// statusWriter wraps ResponseWriter to capture the status code for logging.
+type statusWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (sw *statusWriter) WriteHeader(code int) {
+	sw.status = code
+	sw.ResponseWriter.WriteHeader(code)
 }

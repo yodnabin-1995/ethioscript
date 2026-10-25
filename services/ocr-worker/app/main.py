@@ -22,12 +22,25 @@ from app.adapters import storage
 from app.config import settings
 from app.pipeline.ocr_pipeline import run_ocr
 
-# ── Logging ────────────────────────────────────────────────────────────────────
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    stream=sys.stdout,
-)
+# ── Logging — structured JSON ──────────────────────────────────────────────────
+
+class _JsonFormatter(logging.Formatter):
+    """Emit one valid JSON object per log record so docker logs can be parsed."""
+    def format(self, record: logging.LogRecord) -> str:
+        obj = {
+            "time":  self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "svc":   "ocr-worker",
+            "msg":   record.getMessage(),
+        }
+        if record.exc_info:
+            obj["exc"] = self.formatException(record.exc_info)
+        return json.dumps(obj, ensure_ascii=False)
+
+_handler = logging.StreamHandler(sys.stdout)
+_handler.setFormatter(_JsonFormatter())
+logging.root.setLevel(logging.INFO)
+logging.root.handlers = [_handler]
 logger = logging.getLogger("ocr-worker")
 
 # ── Prometheus metrics ─────────────────────────────────────────────────────────

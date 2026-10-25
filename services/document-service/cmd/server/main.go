@@ -91,6 +91,9 @@ func main() {
 	// ── Router ────────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
 	r.Use(chimiddleware.RealIP)
+	r.Use(middleware.RequestID)
+	r.Use(middleware.Logger(log))
+	r.Use(middleware.Recoverer(log))
 
 	// Public system endpoints (no auth)
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) {
