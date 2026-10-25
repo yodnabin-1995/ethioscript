@@ -475,9 +475,9 @@ services:
       /bin/sh -c "
         mc alias set local http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-MinioPass2026!} &&
         mc mb --ignore-existing local/${MINIO_BUCKET:-ethioscript-assets} &&
-        mc anonymous set private local/${MINIO_BUCKET:-ethioscript-assets} &&
+        mc anonymous set download local/${MINIO_BUCKET:-ethioscript-assets} &&
         mc mb --ignore-existing local/ethioscript-artifacts &&
-        mc anonymous set private local/ethioscript-artifacts &&
+        mc anonymous set download local/ethioscript-artifacts &&
         echo 'MinIO buckets ready'
       "
     networks:
