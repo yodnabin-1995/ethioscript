@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/ethioscript/account-service/internal/middleware"
@@ -8,7 +9,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const maxPhotoSize = 5 << 20 // 5 MB
+const (
+	maxPhotoSize    = 5 << 20        // 5 MB — max file size shown to user
+	maxRequestSize  = maxPhotoSize + (1 << 20) // 6 MB — reader limit includes multipart overhead
+)
 
 // PhotoHandler handles profile photo uploads.
 type PhotoHandler struct {
@@ -49,10 +53,11 @@ func (h *PhotoHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enforce max size before parsing
-	r.Body = http.MaxBytesReader(w, r.Body, maxPhotoSize)
-	if err := r.ParseMultipartForm(maxPhotoSize); err != nil {
-		h.log.Warn("photo upload rejected — file too large",
+	// Use a larger reader limit to accommodate multipart overhead (~1 MB),
+	// then check the actual file size separately.
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestSize)
+	if err := r.ParseMultipartForm(maxRequestSize); err != nil {
+		h.log.Warn("photo upload rejected — request too large",
 			zap.Error(err),
 			zap.String("user_id",  claims.UserID.String()),
 			zap.String("trace_id", middleware.GetTraceID(r.Context())),
@@ -67,6 +72,18 @@ func (h *PhotoHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+
+	// Enforce 5 MB on the actual file size (not the request envelope)
+	if header.Size > maxPhotoSize {
+		h.log.Warn("photo upload rejected — file too large",
+			zap.Int64("size_bytes", header.Size),
+			zap.String("user_id",   claims.UserID.String()),
+			zap.String("trace_id",  middleware.GetTraceID(r.Context())),
+		)
+		middleware.WriteError(w, r, http.StatusRequestEntityTooLarge,
+			fmt.Sprintf("photo must be ≤ 5 MB (got %.1f MB)", float64(header.Size)/(1<<20)), "TOO_LARGE")
+		return
+	}
 
 	// Validate MIME type
 	contentType := header.Header.Get("Content-Type")
