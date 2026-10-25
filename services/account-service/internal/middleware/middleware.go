@@ -42,20 +42,30 @@ func GetTraceID(ctx context.Context) string {
 }
 
 // Logger logs every request with method, path, status, and duration.
+// 5xx → ERROR, 4xx → WARN, 2xx/3xx → INFO so docker logs filtering works.
 func Logger(log *zap.Logger) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
 			rw := &responseWriter{ResponseWriter: w, status: http.StatusOK}
 			next.ServeHTTP(rw, r)
-			log.Info("request",
-				zap.String("method", r.Method),
-				zap.String("path", r.URL.Path),
-				zap.Int("status", rw.status),
+
+			fields := []zap.Field{
+				zap.String("method",   r.Method),
+				zap.String("path",     r.URL.Path),
+				zap.Int("status",      rw.status),
 				zap.Duration("duration", time.Since(start)),
 				zap.String("trace_id", GetTraceID(r.Context())),
-				zap.String("ip", r.RemoteAddr),
-			)
+				zap.String("ip",       r.RemoteAddr),
+			}
+			switch {
+			case rw.status >= 500:
+				log.Error("request", fields...)
+			case rw.status >= 400:
+				log.Warn("request", fields...)
+			default:
+				log.Info("request", fields...)
+			}
 		})
 	}
 }

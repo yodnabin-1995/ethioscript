@@ -52,6 +52,11 @@ func (h *PhotoHandler) UploadPhoto(w http.ResponseWriter, r *http.Request) {
 	// Enforce max size before parsing
 	r.Body = http.MaxBytesReader(w, r.Body, maxPhotoSize)
 	if err := r.ParseMultipartForm(maxPhotoSize); err != nil {
+		h.log.Warn("photo upload rejected — file too large",
+			zap.Error(err),
+			zap.String("user_id",  claims.UserID.String()),
+			zap.String("trace_id", middleware.GetTraceID(r.Context())),
+		)
 		middleware.WriteError(w, r, http.StatusRequestEntityTooLarge, "photo must be ≤ 5 MB", "TOO_LARGE")
 		return
 	}
