@@ -24,8 +24,10 @@ from app.pipeline.ocr_pipeline import run_ocr
 
 # ── Logging — structured JSON ──────────────────────────────────────────────────
 
+
 class _JsonFormatter(logging.Formatter):
     """Emit one valid JSON object per log record so docker logs can be parsed."""
+
     def format(self, record: logging.LogRecord) -> str:
         obj = {
             "time":  self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
@@ -36,6 +38,7 @@ class _JsonFormatter(logging.Formatter):
         if record.exc_info:
             obj["exc"] = self.formatException(record.exc_info)
         return json.dumps(obj, ensure_ascii=False)
+
 
 _handler = logging.StreamHandler(sys.stdout)
 _handler.setFormatter(_JsonFormatter())
