@@ -113,11 +113,12 @@ func main() {
 
 	// ── HTTP Server ───────────────────────────────────────────────────────────
 	srv := &http.Server{
-		Addr:         ":" + cfg.Server.Port,
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 60 * time.Second,
-		IdleTimeout:  120 * time.Second,
+		Addr:           ":" + cfg.Server.Port,
+		Handler:        router,
+		ReadTimeout:    120 * time.Second, // allow up to 2 min for large file uploads
+		WriteTimeout:   120 * time.Second,
+		IdleTimeout:    120 * time.Second,
+		MaxHeaderBytes: 1 << 20, // 1 MB headers max
 	}
 
 	go func() {
