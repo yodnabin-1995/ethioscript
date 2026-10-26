@@ -61,11 +61,23 @@ func (uc *DocumentUseCase) CreateDocument(ctx context.Context, tenantID, userID 
 	outboxID := uuid.New()
 	now := time.Now().UTC()
 
-	// Outbox event payload
+	// Fetch the asset's object_key — workers need this to download from MinIO
+	var objectKey string
+	var mediaType string
+	err = uc.db.QueryRow(ctx,
+		`SELECT object_key, media_type FROM assets WHERE id = $1 AND tenant_id = $2`,
+		assetID, tenantID,
+	).Scan(&objectKey, &mediaType)
+	if err != nil {
+		return nil, fmt.Errorf("asset object_key not found: %w", err)
+	}
+
+	// Outbox event payload — asset_id is the MinIO object_key, not the UUID
 	eventPayload, _ := json.Marshal(map[string]any{
 		"document_id": docID.String(),
 		"job_id":      jobID.String(),
-		"asset_id":    assetID.String(),
+		"asset_id":    objectKey,
+		"media_type":  mediaType,
 		"tenant_id":   tenantID.String(),
 		"task_type":   taskType,
 		"language":    lang,

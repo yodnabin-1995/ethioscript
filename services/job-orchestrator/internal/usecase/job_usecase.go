@@ -140,11 +140,12 @@ func (uc *JobUseCase) HandleWorkerResult(ctx context.Context, result domain.JobR
 			 VALUES
 			   ($1, $2, $3, $4,
 			    COALESCE((SELECT MAX(version) FROM result_versions WHERE document_id = $2), 0) + 1,
-			    FALSE, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+			    FALSE, $5, $6, $7, $8, $9, $10,
+			    (SELECT created_by FROM documents WHERE id = $2),
+			    $11, $12)`,
 			uuid.New(), docID, tenantID, jobID,
 			nullString(result.RawTextKey), result.Confidence, modelMeta,
 			nullInt(result.PageCount), nullInt(result.WordCount), nullInt(result.CharCount),
-			tenantID, // created_by (system)
 			now, now,
 		)
 		if txErr != nil {

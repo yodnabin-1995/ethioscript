@@ -86,14 +86,20 @@ func main() {
 
 	_ = ch.ExchangeDeclare(exchange, "topic", true, false, false, false, nil)
 
-	// Declare result and dead-letter queues
-	for _, q := range []string{resultsQueue, deadLetterQueue} {
-		if _, err := ch.QueueDeclare(q, true, false, false, false, nil); err != nil {
-			log.Fatal("queue declare failed", zap.String("queue", q), zap.Error(err))
-		}
+	// Declare result, dead-letter AND worker queues with correct bindings
+	workerQueues := map[string]string{
+		getEnv("RABBITMQ_QUEUE_OCR", "ethioscript.jobs.ocr"):                "jobs.ocr",
+		getEnv("RABBITMQ_QUEUE_STT", "ethioscript.jobs.stt"):                "jobs.stt",
+		resultsQueue:    "jobs.results",
+		deadLetterQueue: "jobs.dead-letter",
 	}
-	if err := ch.QueueBind(resultsQueue, "jobs.results", exchange, false, nil); err != nil {
-		log.Warn("queue bind failed", zap.Error(err))
+	for qName, routingKey := range workerQueues {
+		if _, err := ch.QueueDeclare(qName, true, false, false, false, nil); err != nil {
+			log.Fatal("queue declare failed", zap.String("queue", qName), zap.Error(err))
+		}
+		if err := ch.QueueBind(qName, routingKey, exchange, false, nil); err != nil {
+			log.Warn("queue bind failed", zap.String("queue", qName), zap.String("key", routingKey), zap.Error(err))
+		}
 	}
 	log.Info("rabbitmq connected", zap.String("exchange", exchange))
 
