@@ -96,10 +96,12 @@ func (r *AccountRepo) GetUserByEmail(ctx context.Context, email string) (*domain
 	var passwordHash string
 	err := r.db.QueryRow(ctx,
 		`SELECT id, tenant_id, email, name, role, status, email_verified,
+		        profile_photo_key, google_id,
 		        failed_login_attempts, locked_until, last_login_at, created_at, updated_at, password_hash
 		 FROM users WHERE email = $1 AND status != 'DELETED'`, email,
 	).Scan(&u.ID, &u.TenantID, &u.Email, &u.Name, &u.Role, &u.Status,
-		&u.EmailVerified, &u.FailedLoginAttempts, &u.LockedUntil, &u.LastLoginAt,
+		&u.EmailVerified, &u.ProfilePhotoKey, &u.GoogleID,
+		&u.FailedLoginAttempts, &u.LockedUntil, &u.LastLoginAt,
 		&u.CreatedAt, &u.UpdatedAt, &passwordHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, "", domain.ErrNotFound
