@@ -14,12 +14,14 @@ import (
 
 // Client wraps a MinIO client with bucket configuration.
 type Client struct {
-	mc     *minio.Client
-	bucket string
+	mc        *minio.Client
+	bucket    string
+	publicURL string // browser-accessible base URL e.g. "http://localhost:6302"
 }
 
 // New creates a MinIO storage client.
-func New(endpoint, accessKey, secretKey, bucket string, useSSL bool) (*Client, error) {
+// publicURL is the externally-accessible URL used in presigned URLs (e.g. http://localhost:6302).
+func New(endpoint, accessKey, secretKey, bucket, publicURL string, useSSL bool) (*Client, error) {
 	mc, err := minio.New(endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(accessKey, secretKey, ""),
 		Secure: useSSL,
@@ -27,18 +29,32 @@ func New(endpoint, accessKey, secretKey, bucket string, useSSL bool) (*Client, e
 	if err != nil {
 		return nil, fmt.Errorf("minio client: %w", err)
 	}
-	return &Client{mc: mc, bucket: bucket}, nil
+	if publicURL == "" {
+		publicURL = "http://" + endpoint
+	}
+	return &Client{mc: mc, bucket: bucket, publicURL: publicURL}, nil
 }
 
-// PresignPutURL generates a pre-signed PUT URL for direct client upload.
+// PresignPutURL generates a pre-signed PUT URL using the public (browser-accessible) endpoint.
 func (c *Client) PresignPutURL(ctx context.Context, objectKey string, ttl time.Duration) (string, error) {
-	params := make(url.Values)
 	u, err := c.mc.PresignedPutObject(ctx, c.bucket, objectKey, ttl)
 	if err != nil {
 		return "", fmt.Errorf("presign put: %w", err)
 	}
-	_ = params
-	return u.String(), nil
+	// Replace internal Docker hostname with public URL so the browser can reach it
+	raw := u.String()
+	if c.publicURL != "" {
+		parsed, perr := url.Parse(raw)
+		if perr == nil {
+			pub, perr2 := url.Parse(c.publicURL)
+			if perr2 == nil {
+				parsed.Scheme = pub.Scheme
+				parsed.Host = pub.Host
+				raw = parsed.String()
+			}
+		}
+	}
+	return raw, nil
 }
 
 // GetObjectBytes downloads an object and returns its bytes.

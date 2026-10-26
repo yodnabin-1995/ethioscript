@@ -42,6 +42,7 @@ func main() {
 
 	// MinIO config
 	minioEndpoint  := getEnv("MINIO_ENDPOINT", "minio:9000")
+	minioPublicURL := getEnv("MINIO_PUBLIC_URL", "http://localhost:6302")
 	minioAccessKey := getEnv("MINIO_ACCESS_KEY", "minioadmin")
 	minioSecretKey := getEnv("MINIO_SECRET_KEY", "minioadmin123")
 	minioBucket    := getEnv("MINIO_BUCKET", "ethioscript-assets")
@@ -77,7 +78,7 @@ func main() {
 	log.Info("rabbitmq connected", zap.String("exchange", exchange))
 
 	// ── MinIO ─────────────────────────────────────────────────────────────────
-	minioClient, err := storage.New(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioSSL)
+	minioClient, err := storage.New(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioPublicURL, minioSSL)
 	if err != nil {
 		log.Fatal("minio client failed", zap.Error(err))
 	}
