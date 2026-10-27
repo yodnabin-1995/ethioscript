@@ -29,6 +29,9 @@ RUN pip install --no-cache-dir pip==24.0 setuptools==69.5.1 wheel && \
 
 COPY app/ ./app/
 
+# Pre-download Whisper model at build time so container has no internet dependency at runtime
+RUN python -c "import whisper; whisper.load_model('small')"
+
 RUN addgroup --gid 1001 worker && \
     adduser --uid 1001 --gid 1001 --disabled-password --gecos "" worker && \
     chown -R worker:worker /app
