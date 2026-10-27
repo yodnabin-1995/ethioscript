@@ -78,16 +78,26 @@ func main() {
 	log.Info("rabbitmq connected", zap.String("exchange", exchange))
 
 	// ── MinIO ─────────────────────────────────────────────────────────────────
-	minioClient, err := storage.New(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioPublicURL, minioSSL)
+	// Internal client for server-side ops (bucket operations, downloads)
+	var minioClient *storage.Client
+	minioClient, err = storage.New(minioEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioPublicURL, minioSSL)
 	if err != nil {
-		log.Fatal("minio client failed", zap.Error(err))
+		log.Fatal("minio internal client failed", zap.Error(err))
 	}
 	log.Info("minio connected", zap.String("bucket", minioBucket))
+
+	// Presign client uses localhost:6302 so signatures match what the browser sends
+	publicEndpoint := strings.TrimPrefix(strings.TrimPrefix(minioPublicURL, "https://"), "http://")
+	presignClient, presignErr := storage.New(publicEndpoint, minioAccessKey, minioSecretKey, minioBucket, minioPublicURL, false)
+	if presignErr != nil {
+		log.Warn("presign client failed — using internal client", zap.Error(presignErr))
+		presignClient = minioClient
+	}
 
 	// ── Use case & Handlers ───────────────────────────────────────────────────
 	uc     := usecase.NewDocumentUseCase(db, ch, exchange, log)
 	docH   := handler.NewDocumentHandler(uc, minioClient, log)
-	assetH := handler.NewAssetHandler(uc, minioClient, minioBucket, log)
+	assetH := handler.NewAssetHandler(uc, presignClient, minioBucket, log)
 
 	_ = maxUploadMB // used for future validation middleware
 
