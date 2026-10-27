@@ -29,8 +29,11 @@ RUN pip install --no-cache-dir pip==24.0 setuptools==69.5.1 wheel && \
 
 COPY app/ ./app/
 
-# Pre-download Whisper model at build time so container has no internet dependency at runtime
-RUN python -c "import whisper; whisper.load_model('small')"
+# Pre-download Whisper model at build time into a world-readable location
+ENV XDG_CACHE_HOME=/app/.cache
+RUN mkdir -p /app/.cache && \
+    python -c "import whisper; whisper.load_model('small')" && \
+    chmod -R 755 /app/.cache
 
 RUN addgroup --gid 1001 worker && \
     adduser --uid 1001 --gid 1001 --disabled-password --gecos "" worker && \
