@@ -87,6 +87,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-MinioPass2026!}
+      MINIO_SERVER_URL: ${MINIO_PUBLIC_URL:-http://localhost:6302}
+      MINIO_BROWSER_REDIRECT_URL: http://localhost:6303
     ports:
       - "6302:9000"
       - "6303:9001"
