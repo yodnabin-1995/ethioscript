@@ -13,11 +13,8 @@ import (
 type UserRole string
 
 const (
-	RoleTenantAdmin      UserRole = "TENANT_ADMIN"
-	RoleContributor      UserRole = "CONTRIBUTOR"
-	RoleReviewer         UserRole = "REVIEWER"
-	RoleReadOnlyAuditor  UserRole = "READ_ONLY_AUDITOR"
-	RolePlatformOperator UserRole = "PLATFORM_OPERATOR"
+	RoleUser  UserRole = "USER"
+	RoleAdmin UserRole = "ADMIN"
 )
 
 type UserStatus string

@@ -64,7 +64,7 @@ func (uc *AccountUseCase) Register(ctx context.Context, req domain.RegisterReque
 		TenantID:  tenant.ID,
 		Email:     req.Email,
 		Name:      req.Name,
-		Role:      domain.RoleContributor,
+		Role:      domain.RoleUser,
 		Status:    domain.StatusPendingVerification,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -336,11 +336,8 @@ func (uc *AccountUseCase) GetUser(ctx context.Context, userID uuid.UUID) (*domai
 
 func (uc *AccountUseCase) UpdateUserRole(ctx context.Context, targetUserID uuid.UUID, req domain.UpdateUserRoleRequest) error {
 	validRoles := map[domain.UserRole]bool{
-		domain.RoleTenantAdmin:      true,
-		domain.RoleContributor:      true,
-		domain.RoleReviewer:         true,
-		domain.RoleReadOnlyAuditor:  true,
-		domain.RolePlatformOperator: true,
+		domain.RoleUser:  true,
+		domain.RoleAdmin: true,
 	}
 	if !validRoles[req.Role] {
 		return fmt.Errorf("%w: invalid role", domain.ErrValidation)
@@ -471,7 +468,7 @@ func (uc *AccountUseCase) LoginWithGoogle(ctx context.Context, info domain.Googl
 		TenantID:        tenant.ID,
 		Email:           info.Email,
 		Name:            info.Name,
-		Role:            domain.RoleContributor,
+		Role:            domain.RoleUser,
 		Status:          domain.StatusActive,
 		GoogleID:        &googleID,
 		EmailVerified:   info.VerifiedEmail,

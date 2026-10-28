@@ -61,7 +61,7 @@ components:
 
     UserRole:
       type: string
-      enum: [TENANT_ADMIN, CONTRIBUTOR, REVIEWER, READ_ONLY_AUDITOR, PLATFORM_OPERATOR]
+      enum: [USER, ADMIN]
 
     UserStatus:
       type: string

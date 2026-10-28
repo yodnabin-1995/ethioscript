@@ -142,24 +142,18 @@ func NewRouter(
 	// ══════════════════════════════════════════════════════════════════════════
 	r.Route("/users", func(r chi.Router) {
 		r.Use(middleware.Authenticate(jwtMgr))
-		r.Use(middleware.RequireRole(
-			domain.RoleTenantAdmin,
-			domain.RolePlatformOperator,
-		))
-		r.Get("/",              userH.ListUsers)
-		r.Get("/{id}",          userH.GetUser)
-		r.Put("/{id}/role",     userH.UpdateUserRole)
-		r.Post("/{id}/suspend", userH.SuspendUser)
-		r.Post("/{id}/activate",userH.ActivateUser)
-		r.Delete("/{id}",       userH.DeleteUser)
+		r.Use(middleware.RequireRole(domain.RoleAdmin))
+		r.Get("/",               userH.ListUsers)
+		r.Get("/{id}",           userH.GetUser)
+		r.Put("/{id}/role",      userH.UpdateUserRole)
+		r.Post("/{id}/suspend",  userH.SuspendUser)
+		r.Post("/{id}/activate", userH.ActivateUser)
+		r.Delete("/{id}",        userH.DeleteUser)
 	})
 
-	// ══════════════════════════════════════════════════════════════════════════
-	// TENANTS — platform operator only
-	// ══════════════════════════════════════════════════════════════════════════
 	r.Route("/tenants", func(r chi.Router) {
 		r.Use(middleware.Authenticate(jwtMgr))
-		r.Use(middleware.RequireRole(domain.RolePlatformOperator))
+		r.Use(middleware.RequireRole(domain.RoleAdmin))
 		r.Post("/",    tenantH.CreateTenant)
 		r.Get("/",     tenantH.ListTenants)
 		r.Get("/{id}", tenantH.GetTenant)
