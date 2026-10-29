@@ -38,3 +38,13 @@ scrape_configs:
     static_configs:
       - targets: ["rabbitmq:15692"]
     metrics_path: /metrics
+
+  - job_name: "notification-service"
+    static_configs:
+      - targets: ["notification-service:6007"]
+    metrics_path: /metrics
+
+  - job_name: "ai-chat"
+    static_configs:
+      - targets: ["ai-chat:6006"]
+    metrics_path: /metrics

@@ -1,21 +1,24 @@
 # ═══════════════════════════════════════════════════════════════════════════════
 #  EthioScript & Voice AI — Microservices Docker Compose
 #  Port map:
-#    6000  → api-gateway          (public entry point)
-#    6001  → document-service     (internal)
-#    6002  → job-orchestrator     (internal)
-#    6003  → ocr-worker metrics   (internal, Prometheus scrape)
-#    6004  → stt-worker metrics   (internal, Prometheus scrape)
-#    6005  → swagger-ui           (API docs)
-#    6100  → pgadmin              (DB admin UI)
-#    6200  → prometheus           (metrics)
-#    6201  → grafana              (dashboards)
-#    6300  → postgres             (exposed for local dev tools)
-#    6301  → redis                (exposed for local dev tools)
-#    6302  → minio API            (object storage API)
-#    6303  → minio console        (object storage UI)
-#    6304  → rabbitmq AMQP        (message broker)
-#    6305  → rabbitmq management  (broker UI)
+#    6000  → api-gateway              (public entry point)
+#    6001  → document-service         (internal)
+#    6002  → job-orchestrator         (internal)
+#    6003  → ocr-worker metrics       (internal, Prometheus scrape)
+#    6004  → stt-worker metrics       (internal, Prometheus scrape)
+#    6005  → swagger-ui               (API docs)
+#    6006  → ai-chat                  (AI chat + voice + analysis)
+#    6007  → notification-service     (in-app inbox, push, OTP, RabbitMQ consumer)
+#    6100  → pgadmin                  (DB admin UI)
+#    6200  → prometheus               (metrics)
+#    6201  → grafana                  (dashboards)
+#    6300  → postgres                 (exposed for local dev tools)
+#    6301  → redis                    (exposed for local dev tools)
+#    6302  → minio API                (object storage API)
+#    6303  → minio console            (object storage UI)
+#    6304  → rabbitmq AMQP            (message broker)
+#    6305  → rabbitmq management      (broker UI)
+#    8000  → account-service          (auth, JWT, user management)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 networks:
@@ -367,6 +370,47 @@ services:
       interval: 30s
       timeout: 5s
       start_period: 15s
+      retries: 3
+    networks:
+      - ethioscript-net
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+      target: production
+    container_name: ethioscript-notification-service
+    restart: unless-stopped
+    ports:
+      - "6007:6007"
+    volumes:
+      - ./services/notification-service/cmd/server/docs/openapi.yml:/app/docs/openapi.yml:ro
+    environment:
+      PORT:                 "6007"
+      ENV:                  ${ENV:-development}
+      POSTGRES_DSN:         postgres://${POSTGRES_USER:-ethio}:${POSTGRES_PASSWORD:-ethiopass}@postgres:5432/${POSTGRES_DB:-ethioscript}?sslmode=disable
+      RABBITMQ_URL:         amqp://${RABBITMQ_USER:-ethio}:${RABBITMQ_PASSWORD:-ethiopass}@rabbitmq:5672/${RABBITMQ_VHOST:-ethioscript}
+      RABBITMQ_EXCHANGE:    ethioscript.events
+      JWT_SECRET:           ${JWT_SECRET:-supersecretjwtkey_change_in_production_32chars}
+      INTERNAL_API_KEY:     ${INTERNAL_API_KEY:-EthioInternalKey2026!}
+      ALLOWED_ORIGINS:      ${ALLOWED_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      VAPID_PUBLIC_KEY:     ${VAPID_PUBLIC_KEY:-}
+      VAPID_PRIVATE_KEY:    ${VAPID_PRIVATE_KEY:-}
+      VAPID_CLAIMS_SUB:     ${VAPID_CLAIMS_SUB:-mailto:api@ethioscript.io}
+      OTP_EXPIRY_MINUTES:   ${OTP_EXPIRY_MINUTES:-10}
+      OTP_LENGTH:           ${OTP_LENGTH:-6}
+      OUTBOX_POLL_SECONDS:  ${OUTBOX_POLL_SECONDS:-5}
+      SWAGGER_ENABLED:      "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:6007/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
       retries: 3
     networks:
       - ethioscript-net

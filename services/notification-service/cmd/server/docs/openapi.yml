@@ -1,0 +1,477 @@
+openapi: "3.0.3"
+info:
+  title: EthioScript — Notification Service
+  version: "1.0.0"
+  description: |
+    Standalone notification microservice for the EthioScript platform.
+
+    ## Authentication
+    | Scheme | Where | Used by |
+    |--------|-------|---------|
+    | **BearerAuth** | `Authorization: Bearer <JWT>` | User inbox, push, admin |
+    | **InternalKey** | `X-Internal-Key: <secret>` | Internal, email/SMS/telegram, bulk |
+
+    ## Roles
+    `USER` · `ADMIN`
+
+  contact:
+    name: EthioScript Team
+    email: api@ethioscript.io
+  license:
+    name: Proprietary
+
+servers:
+  - url: http://localhost:6007
+    description: Local development
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: >
+        JWT issued by account-service.
+        Get it from `POST /auth/login` → copy `access_token`.
+        Paste here **without** the "Bearer " prefix — Swagger adds it.
+    InternalKey:
+      type: apiKey
+      in: header
+      name: X-Internal-Key
+      description: >
+        Shared internal service key.
+        Value of `INTERNAL_API_KEY` in your .env file.
+
+  schemas:
+    Notification:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        user_id:     { type: string, format: uuid }
+        type:        { type: string, enum: [JOB_COMPLETED, JOB_FAILED, DOCUMENT_READY, DOCUMENT_FAILED, SYSTEM_ALERT, OTP, WELCOME, PASSWORD_RESET, EMAIL_VERIFIED, ADMIN_MESSAGE] }
+        channel:     { type: string, enum: [IN_APP, EMAIL, SMS, PUSH, TELEGRAM] }
+        status:      { type: string, enum: [PENDING, SENT, DELIVERED, FAILED, READ] }
+        title:       { type: string }
+        body:        { type: string }
+        action_url:  { type: string, nullable: true }
+        metadata:    { type: object }
+        read_at:     { type: string, format: date-time, nullable: true }
+        delivered_at: { type: string, format: date-time, nullable: true }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+
+    InboxResponse:
+      type: object
+      properties:
+        notifications: { type: array, items: { $ref: '#/components/schemas/Notification' } }
+        total:         { type: integer }
+        page:          { type: integer }
+        page_size:     { type: integer }
+        unread_count:  { type: integer }
+
+    UnreadCountResponse:
+      type: object
+      properties:
+        unread_count: { type: integer }
+
+    MarkReadResponse:
+      type: object
+      properties:
+        id:      { type: string, format: uuid }
+        read_at: { type: string, format: date-time }
+
+    MarkAllReadResponse:
+      type: object
+      properties:
+        marked_count: { type: integer }
+
+    PushSubscribeRequest:
+      type: object
+      required: [endpoint, p256dh_key, auth_key]
+      properties:
+        endpoint:   { type: string, description: "Push subscription endpoint URL" }
+        p256dh_key: { type: string, description: "Base64url-encoded P-256 public key" }
+        auth_key:   { type: string, description: "Base64url-encoded auth secret" }
+        user_agent: { type: string, nullable: true }
+
+    PushSubscribeResponse:
+      type: object
+      properties:
+        id:      { type: string, format: uuid }
+        message: { type: string }
+
+    VapidPublicKeyResponse:
+      type: object
+      properties:
+        vapid_public_key:       { type: string }
+        application_server_key: { type: string }
+
+    OTPSendRequest:
+      type: object
+      required: [target, purpose]
+      properties:
+        target:  { type: string, description: "Email address or phone number" }
+        purpose: { type: string, enum: [EMAIL_VERIFICATION, PASSWORD_RESET, TWO_FACTOR_AUTH, PHONE_VERIFICATION] }
+        user_id: { type: string, format: uuid, nullable: true }
+
+    OTPSendResponse:
+      type: object
+      properties:
+        message:       { type: string }
+        expires_at:    { type: string, format: date-time }
+        masked_target: { type: string }
+
+    OTPVerifyRequest:
+      type: object
+      required: [target, purpose, code]
+      properties:
+        target:  { type: string }
+        purpose: { type: string, enum: [EMAIL_VERIFICATION, PASSWORD_RESET, TWO_FACTOR_AUTH, PHONE_VERIFICATION] }
+        code:    { type: string, minLength: 4, maxLength: 10 }
+
+    OTPVerifyResponse:
+      type: object
+      properties:
+        valid:   { type: boolean }
+        message: { type: string }
+
+    EmailNotificationRequest:
+      type: object
+      required: [user_id, to_email, subject, body_html]
+      properties:
+        user_id:     { type: string, format: uuid }
+        to_email:    { type: string, format: email }
+        subject:     { type: string }
+        body_html:   { type: string }
+        body_text:   { type: string }
+        template_id: { type: string }
+        metadata:    { type: object }
+
+    SMSNotificationRequest:
+      type: object
+      required: [user_id, phone_number, message]
+      properties:
+        user_id:      { type: string, format: uuid }
+        phone_number: { type: string }
+        message:      { type: string }
+        metadata:     { type: object }
+
+    TelegramNotificationRequest:
+      type: object
+      required: [user_id, chat_id, message]
+      properties:
+        user_id:    { type: string, format: uuid }
+        chat_id:    { type: string }
+        message:    { type: string }
+        parse_mode: { type: string, enum: [Markdown, HTML], default: Markdown }
+        metadata:   { type: object }
+
+    BulkNotificationRequest:
+      type: object
+      required: [user_ids, title, body]
+      properties:
+        user_ids:   { type: array, items: { type: string, format: uuid }, minItems: 1, maxItems: 1000 }
+        type:       { type: string, enum: [JOB_COMPLETED, JOB_FAILED, DOCUMENT_READY, DOCUMENT_FAILED, SYSTEM_ALERT, OTP, WELCOME, PASSWORD_RESET, EMAIL_VERIFIED, ADMIN_MESSAGE], default: ADMIN_MESSAGE }
+        channel:    { type: string, enum: [IN_APP, EMAIL, SMS, PUSH, TELEGRAM], default: IN_APP }
+        title:      { type: string }
+        body:       { type: string }
+        action_url: { type: string, nullable: true }
+        metadata:   { type: object }
+
+    BulkNotificationResponse:
+      type: object
+      properties:
+        queued_count: { type: integer }
+        message:      { type: string }
+
+    InternalEventRequest:
+      type: object
+      required: [event_type, user_id, title, body]
+      properties:
+        event_type: { type: string, enum: [JOB_COMPLETED, JOB_FAILED, DOCUMENT_READY, DOCUMENT_FAILED, SYSTEM_ALERT, OTP, WELCOME, PASSWORD_RESET, EMAIL_VERIFIED, ADMIN_MESSAGE] }
+        user_id:    { type: string, format: uuid }
+        title:      { type: string }
+        body:       { type: string }
+        channel:    { type: string, enum: [IN_APP, EMAIL, SMS, PUSH, TELEGRAM], default: IN_APP }
+        action_url: { type: string, nullable: true }
+        metadata:   { type: object }
+
+    InternalEventResponse:
+      type: object
+      properties:
+        notification_id: { type: string, format: uuid }
+        message:         { type: string }
+
+    AdminStatsResponse:
+      type: object
+      properties:
+        total_notifications: { type: integer }
+        unread_total:        { type: integer }
+        by_type:             { type: object, additionalProperties: { type: integer } }
+        by_channel:          { type: object, additionalProperties: { type: integer } }
+        by_status:           { type: object, additionalProperties: { type: integer } }
+        push_subscriptions:  { type: integer }
+        otp_pending:         { type: integer }
+        outbox_pending:      { type: integer }
+        generated_at:        { type: string, format: date-time }
+
+    HealthResponse:
+      type: object
+      properties:
+        status:    { type: string }
+        version:   { type: string }
+        timestamp: { type: string, format: date-time }
+        services:  { type: object, additionalProperties: { type: string } }
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:    { type: string }
+        code:     { type: string }
+        trace_id: { type: string }
+
+paths:
+  # ── System ──────────────────────────────────────────────────────────────────
+  /health:
+    get:
+      tags: [system]
+      summary: Service health check
+      description: Returns service status and dependency health. No authentication required.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/HealthResponse' } } } }
+
+  /metrics:
+    get:
+      tags: [system]
+      summary: Prometheus metrics
+      description: Prometheus scrape endpoint. No authentication required.
+      responses:
+        "200": { description: Prometheus text format }
+
+  # ── Inbox ────────────────────────────────────────────────────────────────────
+  /notifications:
+    get:
+      tags: [inbox]
+      summary: Get notification inbox
+      description: Returns paginated notifications for the authenticated user, newest first.
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: page,        in: query, schema: { type: integer, default: 1 } }
+        - { name: page_size,   in: query, schema: { type: integer, default: 20, maximum: 100 } }
+        - { name: unread_only, in: query, schema: { type: boolean, default: false } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/InboxResponse' } } } }
+        "401": { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /notifications/unread-count:
+    get:
+      tags: [inbox]
+      summary: Get unread count
+      description: Returns the number of unread notifications. Use for badge counters.
+      security:
+        - BearerAuth: []
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/UnreadCountResponse' } } } }
+        "401": { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /notifications/{id}/read:
+    patch:
+      tags: [inbox]
+      summary: Mark notification as read
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MarkReadResponse' } } } }
+        "404": { description: Not Found, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /notifications/mark-all-read:
+    post:
+      tags: [inbox]
+      summary: Mark all notifications as read
+      security:
+        - BearerAuth: []
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/MarkAllReadResponse' } } } }
+        "401": { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  # ── Push ──────────────────────────────────────────────────────────────────────
+  /notifications/push/vapid-public-key:
+    get:
+      tags: [push]
+      summary: Get VAPID public key
+      description: Returns the VAPID application server key needed by the browser to subscribe.
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/VapidPublicKeyResponse' } } } }
+
+  /notifications/push/subscribe:
+    post:
+      tags: [push]
+      summary: Register push subscription
+      description: Registers a browser Web Push subscription for the authenticated user.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PushSubscribeRequest' }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/PushSubscribeResponse' } } } }
+        "400": { description: Bad Request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+    delete:
+      tags: [push]
+      summary: Remove push subscription
+      security:
+        - BearerAuth: []
+      parameters:
+        - { name: endpoint, in: query, required: true, schema: { type: string } }
+      responses:
+        "204": { description: No Content }
+        "401": { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  # ── OTP ───────────────────────────────────────────────────────────────────────
+  /notifications/otp/send:
+    post:
+      tags: [otp]
+      summary: Send OTP code
+      description: Generates a time-limited OTP and sends it to the target. In development the code is logged — connect SMTP/SMS for production.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OTPSendRequest' }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/OTPSendResponse' } } } }
+        "400": { description: Bad Request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "429": { description: Rate Limited, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /notifications/otp/verify:
+    post:
+      tags: [otp]
+      summary: Verify OTP code
+      description: Validates the submitted OTP code against the stored hash.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OTPVerifyRequest' }
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/OTPVerifyResponse' } } } }
+        "400": { description: Bad Request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  # ── Channels (internal auth) ─────────────────────────────────────────────────
+  /notifications/email:
+    post:
+      tags: [channels]
+      summary: Send email notification
+      description: Queues an email via the outbox worker. Requires X-Internal-Key header.
+      security:
+        - InternalKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EmailNotificationRequest' }
+      responses:
+        "202": { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/InternalEventResponse' } } } }
+        "401": { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /notifications/sms:
+    post:
+      tags: [channels]
+      summary: Send SMS notification
+      description: Queues an SMS via the outbox worker. Requires X-Internal-Key header.
+      security:
+        - InternalKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SMSNotificationRequest' }
+      responses:
+        "202": { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/InternalEventResponse' } } } }
+        "401": { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  /notifications/telegram:
+    post:
+      tags: [channels]
+      summary: Send Telegram notification
+      description: Queues a Telegram message via the outbox worker. Requires X-Internal-Key header.
+      security:
+        - InternalKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TelegramNotificationRequest' }
+      responses:
+        "202": { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/InternalEventResponse' } } } }
+        "401": { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  # ── Bulk ─────────────────────────────────────────────────────────────────────
+  /notifications/bulk:
+    post:
+      tags: [bulk]
+      summary: Send bulk notification
+      description: Broadcasts to up to 1000 users. Requires X-Internal-Key header.
+      security:
+        - InternalKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BulkNotificationRequest' }
+      responses:
+        "202": { description: Accepted, content: { application/json: { schema: { $ref: '#/components/schemas/BulkNotificationResponse' } } } }
+        "400": { description: Bad Request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  # ── Internal ─────────────────────────────────────────────────────────────────
+  /internal/notification-events:
+    post:
+      tags: [internal]
+      summary: Create notification from internal event
+      description: HTTP alternative to RabbitMQ — other EthioScript services call this to push a notification. Requires X-Internal-Key header.
+      security:
+        - InternalKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InternalEventRequest' }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/InternalEventResponse' } } } }
+        "400": { description: Bad Request, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+        "401": { description: Unauthorized, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+  # ── Admin ─────────────────────────────────────────────────────────────────────
+  /admin/notifications/stats:
+    get:
+      tags: [admin]
+      summary: Notification service statistics
+      description: Aggregate counts by type, channel, status. Requires ADMIN role JWT.
+      security:
+        - BearerAuth: []
+      responses:
+        "200": { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/AdminStatsResponse' } } } }
+        "403": { description: Forbidden, content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } } }
+
+tags:
+  - name: system
+    description: Health check and Prometheus metrics
+  - name: inbox
+    description: User in-app notification inbox
+  - name: push
+    description: Web Push / VAPID subscription management
+  - name: otp
+    description: One-time password send and verify
+  - name: channels
+    description: Email, SMS, and Telegram delivery stubs
+  - name: bulk
+    description: Broadcast to multiple users
+  - name: internal
+    description: Service-to-service notification creation
+  - name: admin
+    description: Admin statistics and management
